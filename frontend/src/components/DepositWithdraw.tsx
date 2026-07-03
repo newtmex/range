@@ -43,9 +43,9 @@ export function DepositWithdraw({
   token0Address,
   token1Address,
   decimals0 = 18,
-  decimals1 = 8,
-  symbol0 = "MUSD",
-  symbol1 = "BTC",
+  decimals1 = 18,
+  symbol0 = "TOKEN0",
+  symbol1 = "TOKEN1",
   vaultSymbol = "mREBAL",
   balance0,
   balance1,
@@ -55,7 +55,7 @@ export function DepositWithdraw({
   isConnected,
 }: Props) {
   const [tab, setTab] = useState<Tab>("deposit");
-  const [depositToken, setDepositToken] = useState<DepositToken>("MUSD");
+  const [depositToken, setDepositToken] = useState<DepositToken>("token0");
   const [amount, setAmount] = useState("");
   const [tokenMenuOpen, setTokenMenuOpen] = useState(false);
 
@@ -65,7 +65,7 @@ export function DepositWithdraw({
     setTokenMenuOpen(false);
   }
 
-  const balance = depositToken === "MUSD" ? balance0 : balance1;
+  const balance = depositToken === "token0" ? balance0 : balance1;
   // Deposit caps at the token balance; withdraw caps at redeemable shares.
   const maxAmount = tab === "withdraw" ? maxRedeem : balance;
 
@@ -207,8 +207,8 @@ export function DepositWithdraw({
                       style={{ padding: 6 }}
                     >
                       {[
-                        { key: "MUSD" as DepositToken, label: symbol0 },
-                        { key: "BTC" as DepositToken, label: symbol1 },
+                        { key: "token0" as DepositToken, label: symbol0 },
+                        { key: "token1" as DepositToken, label: symbol1 },
                       ].map(({ key, label }) => {
                         const active = depositToken === key;
                         return (
@@ -247,7 +247,7 @@ export function DepositWithdraw({
           </div>
         </div>
 
-        {/* Preview: "You receive X shares / MUSD" */}
+        {/* Preview: "You receive X shares / token0 amount" */}
         {actions.amountBig && actions.previewResult !== undefined && (
           <div
             className="flex items-center justify-between px-3.5 py-2.5 rounded-xl"
