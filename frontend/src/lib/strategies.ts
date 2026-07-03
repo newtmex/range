@@ -1,23 +1,53 @@
-export const STRATEGIES = {
+import { MEZO_TESTNET_ID, MEZO_MAINNET_ID } from "./utils";
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
+export const STRATEGY_META = {
   tight: {
     label: "Tight",
     description: "Narrow range, higher fees, more rebalances",
-    vaultAddress: process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_TIGHT as `0x${string}`,
   },
   medium: {
     label: "Medium",
     description: "Balanced range and rebalance frequency",
-    vaultAddress: process.env
-      .NEXT_PUBLIC_VAULT_MUSD_BTC_MEDIUM as `0x${string}`,
   },
   wide: {
     label: "Wide",
     description: "Wide range, lower fees, fewer rebalances",
-    vaultAddress: process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_WIDE as `0x${string}`,
   },
 } as const;
 
-export type StrategyKey = keyof typeof STRATEGIES;
+export type StrategyKey = keyof typeof STRATEGY_META;
+
+const STRATEGY_ADDRESSES: Record<number, Record<StrategyKey, `0x${string}`>> = {
+  [MEZO_TESTNET_ID]: {
+    tight: (process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_TIGHT_TESTNET ||
+      ZERO_ADDRESS) as `0x${string}`,
+    medium: (process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_MEDIUM_TESTNET ||
+      ZERO_ADDRESS) as `0x${string}`,
+    wide: (process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_WIDE_TESTNET ||
+      ZERO_ADDRESS) as `0x${string}`,
+  },
+  [MEZO_MAINNET_ID]: {
+    tight: (process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_TIGHT_MAINNET ||
+      ZERO_ADDRESS) as `0x${string}`,
+    medium: (process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_MEDIUM_MAINNET ||
+      ZERO_ADDRESS) as `0x${string}`,
+    wide: (process.env.NEXT_PUBLIC_VAULT_MUSD_BTC_WIDE_MAINNET ||
+      ZERO_ADDRESS) as `0x${string}`,
+  },
+};
+
+/** Falls back to the testnet address when chainId is undefined or unrecognized. */
+export function getStrategyVaultAddress(
+  chainId: number | undefined,
+  key: StrategyKey,
+): `0x${string}` {
+  const addresses =
+    STRATEGY_ADDRESSES[chainId ?? MEZO_TESTNET_ID] ??
+    STRATEGY_ADDRESSES[MEZO_TESTNET_ID];
+  return addresses[key];
+}
 
 export const DEFAULT_STRATEGY: StrategyKey = "tight";
 
