@@ -1,6 +1,7 @@
 "use client";
 
-import { useAccount } from "wagmi";
+import { useAccount, useChainId } from "wagmi";
+import { formatUnits } from "viem";
 import {
   useVaultState,
   usePoolState,
@@ -9,10 +10,18 @@ import {
   useVaultMetrics,
 } from "@/hooks/useVault";
 import { useVaultEvents } from "@/hooks/useVaultEvents";
-import { computeAPY } from "@/lib/utils";
+import {
+  computeAPY,
+  isMusdToken0,
+  tickToPrice,
+  toMusdFromToken0,
+  combineFeesToMusd,
+} from "@/lib/utils";
 
 export function useVaultPage(vaultAddress: `0x${string}`) {
   const { isConnected } = useAccount();
+  const chainId = useChainId();
+  const isToken0Musd = isMusdToken0(chainId);
 
   const vault = useVaultState(vaultAddress);
   const pool = usePoolState(vaultAddress, vault.initialized);
@@ -27,33 +36,71 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
   );
   const events = useVaultEvents(vaultAddress);
 
-  const sym0 = tokens.symbol0 ?? "MUSD";
-  const sym1 = tokens.symbol1 ?? "BTC";
+  const sym0 = tokens.symbol0 ?? "TOKEN0";
+  const sym1 = tokens.symbol1 ?? "TOKEN1";
   const d0 = vault.decimals0 ?? 18;
-  const d1 = vault.decimals1 ?? 8;
+  const d1 = vault.decimals1 ?? 18;
+  const symMusd = isToken0Musd ? sym0 : sym1;
 
-  const apy = computeAPY(
-    metrics.fees0Earned ?? events.totalFee0,
-    vault.totalAssets,
-    d0,
-    events.firstEventTimestamp,
-  );
+  // NOTE: pool.currentTick is a spot price (VaultLens.getPoolState's own doc warns
+  // it's manipulable within a block). Used here for display-only MUSD conversion;
+  // refetches every 5-10s so any manipulation is transient. A TWAP-based price
+  // would require a new VaultLens view function (out of scope for this frontend-only change).
+  const price =
+    pool.currentTick !== undefined
+      ? tickToPrice(pool.currentTick, d0, d1)
+      : undefined;
+
+  const totalFee0 = metrics.fees0Earned ?? events.totalFee0;
+  const totalFee1 = metrics.fees1Earned ?? events.totalFee1;
+
+  const tvlMusd =
+    vault.totalAssets !== undefined && price !== undefined
+      ? toMusdFromToken0(
+          Number(formatUnits(vault.totalAssets, d0)),
+          price,
+          isToken0Musd,
+        )
+      : undefined;
+
+  const sharePriceMusd =
+    vault.sharePrice !== undefined && price !== undefined
+      ? toMusdFromToken0(
+          Number(formatUnits(vault.sharePrice, d0)),
+          price,
+          isToken0Musd,
+        )
+      : undefined;
+
+  const feesMusd =
+    totalFee0 !== undefined && totalFee1 !== undefined && price !== undefined
+      ? combineFeesToMusd(
+          Number(formatUnits(totalFee0, d0)),
+          Number(formatUnits(totalFee1, d1)),
+          price,
+          isToken0Musd,
+        )
+      : undefined;
+
+  const apy = computeAPY(feesMusd, tvlMusd, events.firstEventTimestamp);
 
   return {
     isConnected,
     sym0,
     sym1,
+    symMusd,
     vaultSymbol: vault.vaultSymbol,
     d0,
     d1,
     vault,
     pool,
-    metrics,
     user,
     events,
     apy,
+    tvlMusd,
+    feesMusd,
+    sharePriceMusd,
     rebalanceCount: metrics.rebalanceCount ?? events.rebalanceCount,
-    totalFee0: metrics.fees0Earned ?? events.totalFee0,
     tickLower: metrics.tickLower ?? pool.tickLower,
     tickUpper: metrics.tickUpper ?? pool.tickUpper,
   };
