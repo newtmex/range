@@ -1,6 +1,6 @@
 "use client";
 
-import { STRATEGIES, StrategyKey } from "@/lib/strategies";
+import { STRATEGY_META, StrategyKey } from "@/lib/strategies";
 
 interface Props {
   selected: StrategyKey;
@@ -12,8 +12,8 @@ export function StrategySelector({ selected, onSelect }: Props) {
     <div className="space-y-2">
       <span className="label">Strategy</span>
       <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
-        {(Object.keys(STRATEGIES) as StrategyKey[]).map((key) => {
-          const s = STRATEGIES[key];
+        {(Object.keys(STRATEGY_META) as StrategyKey[]).map((key) => {
+          const s = STRATEGY_META[key];
           const isActive = selected === key;
           return (
             <button
