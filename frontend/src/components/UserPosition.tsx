@@ -15,7 +15,7 @@ interface Props {
 export function UserPosition({
   vaultAddress,
   shares,
-  symbol0 = "MUSD",
+  symbol0 = "TOKEN0",
   decimals0 = 18,
   isConnected,
 }: Props) {
