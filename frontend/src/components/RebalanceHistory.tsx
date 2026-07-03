@@ -30,7 +30,7 @@ function formatAddr(hash: string): string {
 export function RebalanceHistory({
   rebalances,
   isLoading,
-  decimals0 = 8,
+  decimals0 = 18,
   decimals1 = 18,
   symbol0 = "TOKEN0",
   symbol1 = "TOKEN1",
