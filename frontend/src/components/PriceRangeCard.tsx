@@ -104,7 +104,7 @@ export function PriceRangeCard({
   tickLower,
   tickUpper,
   isOutOfRange,
-  decimals0 = 8,
+  decimals0 = 18,
   decimals1 = 18,
   symbol0 = "TOKEN0",
   symbol1 = "TOKEN1",
