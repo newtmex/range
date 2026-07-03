@@ -1,15 +1,18 @@
 "use client";
 
-import { useReadContracts, useReadContract, useAccount } from "wagmi";
-import { VAULT_ABI, VAULT_LENS_ADDRESS, VAULT_LENS_ABI, ERC20_ABI } from "@/lib/contracts";
+import { useReadContracts, useReadContract, useAccount, useChainId } from "wagmi";
+import { VAULT_ABI, VAULT_LENS_ABI, ERC20_ABI, getVaultLensAddress } from "@/lib/contracts";
 
 export function useVaultState(vaultAddress: `0x${string}`) {
+  const chainId = useChainId();
+  const vaultLensAddress = getVaultLensAddress(chainId);
+
   const results = useReadContracts({
     contracts: [
       { address: vaultAddress, abi: VAULT_ABI, functionName: "symbol" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "totalAssets" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "totalSupply" },
-      { address: VAULT_LENS_ADDRESS, abi: VAULT_LENS_ABI, functionName: "sharePrice", args: [vaultAddress] },
+      { address: vaultLensAddress, abi: VAULT_LENS_ABI, functionName: "sharePrice", args: [vaultAddress] },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "paused" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "performanceFeeBps" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "tokenId" },
@@ -43,8 +46,11 @@ export function useVaultState(vaultAddress: `0x${string}`) {
 }
 
 export function usePoolState(vaultAddress: `0x${string}`, initialized: boolean) {
+  const chainId = useChainId();
+  const vaultLensAddress = getVaultLensAddress(chainId);
+
   const poolState = useReadContract({
-    address: VAULT_LENS_ADDRESS,
+    address: vaultLensAddress,
     abi: VAULT_LENS_ABI,
     functionName: "getPoolState",
     args: [vaultAddress],
@@ -52,7 +58,7 @@ export function usePoolState(vaultAddress: `0x${string}`, initialized: boolean) 
   });
 
   const position = useReadContract({
-    address: VAULT_LENS_ADDRESS,
+    address: vaultLensAddress,
     abi: VAULT_LENS_ABI,
     functionName: "getPosition",
     args: [vaultAddress],
@@ -60,7 +66,7 @@ export function usePoolState(vaultAddress: `0x${string}`, initialized: boolean) 
   });
 
   const outOfRange = useReadContract({
-    address: VAULT_LENS_ADDRESS,
+    address: vaultLensAddress,
     abi: VAULT_LENS_ABI,
     functionName: "isOutOfRange",
     args: [vaultAddress],
@@ -86,8 +92,11 @@ export function usePoolState(vaultAddress: `0x${string}`, initialized: boolean) 
 }
 
 export function useVaultMetrics(vaultAddress: `0x${string}`, initialized: boolean) {
+  const chainId = useChainId();
+  const vaultLensAddress = getVaultLensAddress(chainId);
+
   const result = useReadContract({
-    address: VAULT_LENS_ADDRESS,
+    address: vaultLensAddress,
     abi: VAULT_LENS_ABI,
     functionName: "getVaultMetrics",
     args: [vaultAddress],
