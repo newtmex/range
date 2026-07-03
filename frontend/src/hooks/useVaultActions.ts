@@ -38,7 +38,8 @@ function friendlyError(err: unknown): string {
 }
 
 export type Tab = "deposit" | "withdraw";
-export type DepositToken = "MUSD" | "BTC";
+/** Mirrors the underlying Uniswap pool's token0/token1 ordering — not a fixed real-world asset. Which one is MUSD vs BTC depends on the connected chain (see isMusdToken0 in lib/utils.ts). Use symbol0/symbol1 for display names. */
+export type DepositToken = "token0" | "token1";
 export type TxState = "idle" | "approving" | "pending" | "success" | "error";
 
 interface Params {
@@ -109,14 +110,14 @@ export function useVaultActions({
     }
   }, [isTxSuccess, isTxError, txReceiptError]);
 
-  const isToken0 = tab === "withdraw" || depositToken === "MUSD";
+  const isToken0 = tab === "withdraw" || depositToken === "token0";
   const inputDecimals = isToken0 ? decimals0 : decimals1;
 
   let amountBig: bigint | undefined = parseUnits(amount, inputDecimals);
 
   let inputSymbol: string;
   if (tab === "withdraw") inputSymbol = "Shares";
-  else if (depositToken === "MUSD") inputSymbol = symbol0;
+  else if (depositToken === "token0") inputSymbol = symbol0;
   else inputSymbol = symbol1;
 
   // Deposit preview → shares received. Withdraw preview → token0 received.
@@ -127,7 +128,7 @@ export function useVaultActions({
   let previewFn: "previewRedeem" | "previewDeposit" | "previewDepositToken1" =
     "previewDepositToken1";
   if (tab === "withdraw") previewFn = "previewRedeem";
-  else if (depositToken === "MUSD") previewFn = "previewDeposit";
+  else if (depositToken === "token0") previewFn = "previewDeposit";
 
   const { data: previewResult } = useReadContract({
     address: vaultAddress,
@@ -137,9 +138,9 @@ export function useVaultActions({
     query: { enabled: !!amountBig },
   });
 
-  const isDepositingMUSD = tab === "deposit" && depositToken === "MUSD";
-  const allowance = isDepositingMUSD ? allowance0 : allowance1;
-  const tokenAddress = isDepositingMUSD ? token0Address : token1Address;
+  const isDepositingToken0 = tab === "deposit" && depositToken === "token0";
+  const allowance = isDepositingToken0 ? allowance0 : allowance1;
+  const tokenAddress = isDepositingToken0 ? token0Address : token1Address;
 
   const needsApproval =
     tab === "deposit" &&
@@ -188,7 +189,7 @@ export function useVaultActions({
       switch (tab) {
         case "deposit":
           switch (depositToken) {
-            case "MUSD":
+            case "token0":
               await publicClient?.simulateContract({
                 address: vaultAddress,
                 abi: VAULT_ABI,
@@ -203,13 +204,18 @@ export function useVaultActions({
                 args: [amountBig, address],
               });
               break;
-            default:
+            case "token1":
               hash = await writeContractAsync({
                 address: vaultAddress,
                 abi: VAULT_ABI,
                 functionName: "depositToken1",
                 args: [amountBig, address],
               });
+              break;
+            default: {
+              const _exhaustive: never = depositToken;
+              throw new Error(`Unknown depositToken: ${_exhaustive}`);
+            }
           }
           break;
         case "withdraw":
