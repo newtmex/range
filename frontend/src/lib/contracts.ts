@@ -1,5 +1,21 @@
-export const VAULT_LENS_ADDRESS = (process.env.NEXT_PUBLIC_VAULT_LENS ||
-  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+import { MEZO_TESTNET_ID, MEZO_MAINNET_ID } from "./utils";
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
+const VAULT_LENS_ADDRESSES: Record<number, `0x${string}`> = {
+  [MEZO_TESTNET_ID]: (process.env.NEXT_PUBLIC_VAULT_LENS_TESTNET ||
+    ZERO_ADDRESS) as `0x${string}`,
+  [MEZO_MAINNET_ID]: (process.env.NEXT_PUBLIC_VAULT_LENS_MAINNET ||
+    ZERO_ADDRESS) as `0x${string}`,
+};
+
+/** Falls back to the testnet address when chainId is undefined or unrecognized. */
+export function getVaultLensAddress(chainId: number | undefined): `0x${string}` {
+  return (
+    VAULT_LENS_ADDRESSES[chainId ?? MEZO_TESTNET_ID] ??
+    VAULT_LENS_ADDRESSES[MEZO_TESTNET_ID]
+  );
+}
 
 export const VAULT_LENS_ABI = [
   {
