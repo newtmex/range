@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
+import { useChainId } from "wagmi";
 import { Suspense, useCallback } from "react";
 import { Header } from "@/components/ui/header";
 import { VaultStats } from "@/components/VaultStats";
@@ -12,7 +13,7 @@ import { Footer } from "@/components/ui/footer";
 import { StrategySelector } from "@/components/StrategySelector";
 import { useVaultPage } from "@/hooks/useVaultPage";
 import {
-  STRATEGIES,
+  getStrategyVaultAddress,
   resolveStrategy,
   type StrategyKey,
 } from "@/lib/strategies";
@@ -28,13 +29,15 @@ export default function Home() {
 function VaultPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const chainId = useChainId();
   const strategyKey = resolveStrategy(searchParams.get("strategy"));
-  const vaultAddress = STRATEGIES[strategyKey].vaultAddress;
+  const vaultAddress = getStrategyVaultAddress(chainId, strategyKey);
 
   const {
     isConnected,
     sym0,
     sym1,
+    symMusd,
     vaultSymbol,
     d0,
     d1,
@@ -43,8 +46,10 @@ function VaultPageContent() {
     user,
     events,
     apy,
+    tvlMusd,
+    feesMusd,
+    sharePriceMusd,
     rebalanceCount,
-    totalFee0,
     tickLower,
     tickUpper,
   } = useVaultPage(vaultAddress);
@@ -81,16 +86,15 @@ function VaultPageContent() {
 
         {/* Stats — full width */}
         <VaultStats
-          totalAssets={vault.totalAssets}
-          sharePrice={vault.sharePrice}
+          tvlMusd={tvlMusd}
+          sharePriceMusd={sharePriceMusd}
+          feesMusd={feesMusd}
+          symMusd={symMusd}
           performanceFeeBps={vault.performanceFeeBps}
           paused={vault.paused}
-          decimals0={d0}
-          symbol0={sym0}
           isLoading={vault.isLoading}
           apy={apy}
           rebalanceCount={rebalanceCount}
-          totalFee0={totalFee0}
           tickLower={tickLower}
           tickUpper={tickUpper}
         />
