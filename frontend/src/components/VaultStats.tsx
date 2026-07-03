@@ -1,18 +1,17 @@
 "use client";
 
-import { formatTokenAmount, formatBps } from "@/lib/utils";
+import { formatDisplayNumber, formatBps } from "@/lib/utils";
 
 interface VaultStatsProps {
-  totalAssets?: bigint;
-  sharePrice?: bigint;
+  tvlMusd?: number;
+  sharePriceMusd?: number;
+  feesMusd?: number;
+  symMusd?: string;
   performanceFeeBps?: bigint;
   paused?: boolean;
-  decimals0?: number;
-  symbol0?: string;
   isLoading: boolean;
   apy?: number;
   rebalanceCount?: bigint | number;
-  totalFee0?: bigint;
   tickLower?: number;
   tickUpper?: number;
 }
@@ -49,28 +48,24 @@ function Stat({
 }
 
 export function VaultStats({
-  totalAssets,
-  sharePrice,
+  tvlMusd,
+  sharePriceMusd,
+  feesMusd,
+  symMusd = "MUSD",
   performanceFeeBps,
   paused,
-  decimals0,
-  symbol0,
   isLoading,
   apy,
   rebalanceCount,
-  totalFee0,
   tickLower,
   tickUpper,
 }: VaultStatsProps) {
-  const d0 = decimals0 ?? 8;
-  const sym = symbol0 ?? "TOKEN0";
-
   const tiles: { label: string; value: React.ReactNode; highlight?: boolean }[] = [
     {
       label: "TVL",
       value:
-        totalAssets !== undefined
-          ? `${formatTokenAmount(totalAssets, d0, 6)} ${sym}`
+        tvlMusd !== undefined
+          ? `${formatDisplayNumber(tvlMusd, 6)} ${symMusd}`
           : "—",
     },
     {
@@ -81,7 +76,9 @@ export function VaultStats({
     {
       label: "Fees Earned",
       value:
-        totalFee0 !== undefined ? `${formatTokenAmount(totalFee0, d0, 6)} ${sym}` : "—",
+        feesMusd !== undefined
+          ? `${formatDisplayNumber(feesMusd, 6)} ${symMusd}`
+          : "—",
     },
     {
       label: "Status",
@@ -110,7 +107,9 @@ export function VaultStats({
     {
       label: "Share Price",
       value:
-        sharePrice !== undefined ? `${formatTokenAmount(sharePrice, d0, 8)} ${sym}` : "—",
+        sharePriceMusd !== undefined
+          ? `${formatDisplayNumber(sharePriceMusd, 8)} ${symMusd}`
+          : "—",
     },
     {
       label: "Rebalances",
