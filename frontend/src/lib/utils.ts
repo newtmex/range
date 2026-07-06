@@ -3,7 +3,7 @@ import { formatUnits } from "viem";
 export function sqrtPriceX96ToPrice(
   sqrtPriceX96: bigint,
   decimals0: number,
-  decimals1: number
+  decimals1: number,
 ): number {
   if (sqrtPriceX96 === BigInt(0)) return 0;
   const sqrtPrice = Number(sqrtPriceX96) / Math.pow(2, 96);
@@ -14,7 +14,7 @@ export function sqrtPriceX96ToPrice(
 export function tickToPrice(
   tick: number,
   decimals0: number,
-  decimals1: number
+  decimals1: number,
 ): number {
   return Math.pow(1.0001, tick) * Math.pow(10, decimals0 - decimals1);
 }
@@ -40,16 +40,22 @@ export function formatDisplayNumber(num: number, displayDecimals = 6): string {
   const abs = Math.abs(num);
   if (abs < 0.000001) return "< 0.000001";
   if (abs < 1) return num.toFixed(displayDecimals);
-  if (abs < 1000) return num.toLocaleString("en-US", { maximumFractionDigits: displayDecimals });
+  if (abs < 1000)
+    return num.toLocaleString("en-US", {
+      maximumFractionDigits: displayDecimals,
+    });
   return num.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
 export function formatTokenAmount(
   amount: bigint,
   decimals: number,
-  displayDecimals = 6
+  displayDecimals = 6,
 ): string {
-  return formatDisplayNumber(parseFloat(formatUnits(amount, decimals)), displayDecimals);
+  return formatDisplayNumber(
+    parseFloat(formatUnits(amount, decimals)),
+    displayDecimals,
+  );
 }
 
 export function formatUSD(value: number): string {
@@ -76,11 +82,19 @@ export function explorerTxUrl(chainId: number, txHash: string): string {
 }
 
 /**
+ * Whether token0 is MUSD. Prefers the vault's actual token0 symbol (ground truth,
+ * since token0/token1 ordering depends on the deployed token addresses, not just
+ * the chain). Falls back to the chain convention below only while the symbol is
+ * still loading:
  * Testnet (31611): token0 = MUSD, token1 = BTC.
  * Mainnet (31612): token0 = BTC, token1 = MUSD.
  * Defaults to the testnet convention when chainId is unknown/unconnected.
  */
-export function isMusdToken0(chainId: number | undefined): boolean {
+export function isMusdToken0(
+  chainId: number | undefined,
+  symbol0?: string,
+): boolean {
+  if (symbol0 !== undefined) return symbol0 === "MUSD";
   return chainId !== MEZO_MAINNET_ID;
 }
 
@@ -100,9 +114,9 @@ export const STRATEGY_LABELS: Record<number, string> = {
 };
 
 export const STRATEGY_DESCRIPTIONS: Record<number, string> = {
-  0: "Narrow ±300 tick range — higher fee density, more frequent rebalancing",
-  1: "Balanced ±700 tick range — moderate fees, moderate rebalancing",
-  2: "Wide ±1200 tick range — lower fee density, infrequent rebalancing",
+  0: "Narrow ±600 tick range — higher fee density, more frequent rebalancing",
+  1: "Balanced ±1000 tick range — moderate fees, moderate rebalancing",
+  2: "Wide ±2000 tick range — lower fee density, infrequent rebalancing",
 };
 
 export const STRATEGY_COLORS: Record<number, string> = {
@@ -122,14 +136,17 @@ export function toMusdFromToken0(
   return isToken0Musd ? amountToken0 : amountToken0 * price;
 }
 
-/** Combines fee0 + fee1 (human amounts) into a single MUSD figure, using `price` = token1 amount per 1 token0 (as returned by tickToPrice/sqrtPriceX96ToPrice, decimal-adjusted, human units). */
+/** Combines fee0 + fee1 (human amounts) into a single MUSD figure, using `price` = token1 amount per 1 token0 (as returned by tickToPrice/sqrtPriceX96ToPrice, decimal-adjusted, human units). Returns undefined if `price` is unavailable (<= 0), rather than silently dropping the fee1 contribution. */
 export function combineFeesToMusd(
   fee0: number,
   fee1: number,
   price: number,
   isToken0Musd: boolean,
-): number {
-  if (isToken0Musd) return fee0 + (price > 0 ? fee1 / price : 0);
+): number | undefined {
+  if (isToken0Musd) {
+    if (price <= 0) return undefined;
+    return fee0 + fee1 / price;
+  }
   return fee0 * price + fee1;
 }
 

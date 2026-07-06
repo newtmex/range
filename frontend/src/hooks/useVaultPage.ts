@@ -21,12 +21,12 @@ import {
 export function useVaultPage(vaultAddress: `0x${string}`) {
   const { isConnected } = useAccount();
   const chainId = useChainId();
-  const isToken0Musd = isMusdToken0(chainId);
 
   const vault = useVaultState(vaultAddress);
   const pool = usePoolState(vaultAddress, vault.initialized);
   const metrics = useVaultMetrics(vaultAddress, vault.initialized);
   const tokens = useTokenInfo(vault.token0Address, vault.token1Address);
+  const isToken0Musd = isMusdToken0(chainId, tokens.symbol0);
   const user = useUserPosition(
     vaultAddress,
     vault.token0Address,
@@ -36,20 +36,18 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
   );
   const events = useVaultEvents(vaultAddress);
 
+  console.log(vault, pool, metrics, tokens, user, events, "vault page data");
   const sym0 = tokens.symbol0 ?? "TOKEN0";
   const sym1 = tokens.symbol1 ?? "TOKEN1";
   const d0 = vault.decimals0 ?? 18;
   const d1 = vault.decimals1 ?? 18;
   const symMusd = isToken0Musd ? sym0 : sym1;
 
-  // NOTE: pool.currentTick is a spot price (VaultLens.getPoolState's own doc warns
-  // it's manipulable within a block). Used here for display-only MUSD conversion;
-  // refetches every 5-10s so any manipulation is transient. A TWAP-based price
-  // would require a new VaultLens view function (out of scope for this frontend-only change).
   const price =
     pool.currentTick !== undefined
       ? tickToPrice(pool.currentTick, d0, d1)
       : undefined;
+
 
   const totalFee0 = metrics.fees0Earned ?? events.totalFee0;
   const totalFee1 = metrics.fees1Earned ?? events.totalFee1;

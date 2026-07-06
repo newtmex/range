@@ -11,18 +11,46 @@ Built for the [Mezo DEX Automated LP Rebalancing Vault Bounty](https://coda.io/d
 
 ## Deployed Contracts (Mezo Testnet)
 
-| Contract         | Address                                      |
-| ---------------- | -------------------------------------------- |
-| Implementation   | `0x69DE1125e5b3fbdD5e64A3F47803AF761c2e7699` |
-| CLDexAdapter     | `0x4403297D0Fbc68B5643418dEe4b2A7606A3fEb16` |
-| VaultLens        | `0x96F18Ee1aF466981C50b1E76D7604a652b451Cd0` |
-| VaultFactory     | `0x5260ead0f831040Fb14901DDAD758c0110fd3939` |
-| Strategy Tight   | `0x79f1E677C3ba8481b7f5B676EaB606AEa7dA8eD5` |
-| Strategy Medium  | `0x4f562D8e199a02363a7f4663027CdEEFfB395686` |
-| Strategy Wide    | `0x07181Dc9E7538E5CA841B54819a354F3A2900EF9` |
+| Contract              | Address                                      |
+| --------------------- | -------------------------------------------- |
+| Implementation        | `0x69DE1125e5b3fbdD5e64A3F47803AF761c2e7699` |
+| CLDexAdapter          | `0x4403297D0Fbc68B5643418dEe4b2A7606A3fEb16` |
+| VaultLens             | `0x96F18Ee1aF466981C50b1E76D7604a652b451Cd0` |
+| VaultFactory          | `0x5260ead0f831040Fb14901DDAD758c0110fd3939` |
+| Strategy Tight        | `0x79f1E677C3ba8481b7f5B676EaB606AEa7dA8eD5` |
+| Strategy Medium       | `0x4f562D8e199a02363a7f4663027CdEEFfB395686` |
+| Strategy Wide         | `0x07181Dc9E7538E5CA841B54819a354F3A2900EF9` |
 | Vault MUSD/BTC Tight  | `0x9b29b71829597A1B705Ea1Bab1C8B2fD00088594` |
 | Vault MUSD/BTC Medium | `0x3f92984091B71862F848452aE49943060C3Fac1A` |
 | Vault MUSD/BTC Wide   | `0x4b192b5f56fe5066a8B44dAa2376bE85073f3a3b` |
+
+## Deployed Contracts (Mezo Mainnet)
+
+| Contract              | Address                                      |
+| --------------------- | -------------------------------------------- |
+| Implementation        | `0x5dbcaCc96F813854DC677f028C051f7ffCD9fC0a` |
+| CLDexAdapter          | `0xfBb18Aa30E3A850C49161BE7585c79e13993ABc2` |
+| VaultLens             | `0x0AC280d086cEDC2c2633b5Cd7f57779DcF5afaF9` |
+| VaultFactory          | `0xCbBB3309C3f91E73115Ea53f15771334ACFc6135` |
+| Strategy Tight        | `0xb29a0d5128d16aEcaFA393DFF272ea0d884dC388` |
+| Strategy Medium       | `0xc9075D7D452eca77f60A34B5838f5B4818eAEaa8` |
+| Strategy Wide         | `0x9711cD52c506aAF0422C68B0D45829324E9eB4B2` |
+| Vault MUSD/BTC Tight  | `0x768E0b7ff93Ab0880A58908ddCC86094efC09486` |
+| Vault MUSD/BTC Medium | `0x1575ae6102B20EF4340AE80A79462A922029a36B` |
+| Vault MUSD/BTC Wide   | `0x4f89Cc28936c07391acD5AE0e037086D25B7A67C` |
+
+## Mainnet Configuration
+
+External DEX contracts and role addresses used for the Mezo mainnet deployment (see [`Deploy.s.sol`](script/Deploy.s.sol) / [`.env.deploy.example`](.env.deploy.example)):
+
+| Role / Contract  | Address                                      |
+| ---------------- | -------------------------------------------- |
+| Pool (MUSD/BTC)  | `0x9CBc1537d255768b431488305b1C7EFc2ac95022` |
+| Position Manager | `0x509Bc221df2B83927c695FA0bb0f5B21053C874c` |
+| Swap Router      | `0x37cDd11919ec3860eaD9efB8673d7476E5326225` |
+| Owner            | `0x049416dE457E8a114c536e5FE379b4B290b73f3C` |
+| Operator         | `0xE962E35bc7cd42201aCaC13db05e4cF4836B5335` |
+| Guardian         | `0x017FF5FB886E90f9e5ADb405D8eFddffC1162dD2` |
 
 ## Background
 

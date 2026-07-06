@@ -24,7 +24,12 @@ export const mezoMainnet = defineChain({
   name: "Mezo",
   nativeCurrency: { name: "Bitcoin", symbol: "BTC", decimals: 18 },
   rpcUrls: {
-    default: { http: ["https://rpc.mezo.org"] },
+    default: {
+      http: [
+        "https://mainnet.mezo.public.validationcloud.io",
+        "https://mezo.drpc.org",
+      ],
+    },
   },
   blockExplorers: {
     default: {

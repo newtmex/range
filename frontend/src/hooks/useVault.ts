@@ -1,7 +1,17 @@
 "use client";
 
-import { useReadContracts, useReadContract, useAccount, useChainId } from "wagmi";
-import { VAULT_ABI, VAULT_LENS_ABI, ERC20_ABI, getVaultLensAddress } from "@/lib/contracts";
+import {
+  useReadContracts,
+  useReadContract,
+  useAccount,
+  useChainId,
+} from "wagmi";
+import {
+  VAULT_ABI,
+  VAULT_LENS_ABI,
+  ERC20_ABI,
+  getVaultLensAddress,
+} from "@/lib/contracts";
 
 export function useVaultState(vaultAddress: `0x${string}`) {
   const chainId = useChainId();
@@ -12,9 +22,18 @@ export function useVaultState(vaultAddress: `0x${string}`) {
       { address: vaultAddress, abi: VAULT_ABI, functionName: "symbol" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "totalAssets" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "totalSupply" },
-      { address: vaultLensAddress, abi: VAULT_LENS_ABI, functionName: "sharePrice", args: [vaultAddress] },
+      {
+        address: vaultLensAddress,
+        abi: VAULT_LENS_ABI,
+        functionName: "sharePrice",
+        args: [vaultAddress],
+      },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "paused" },
-      { address: vaultAddress, abi: VAULT_ABI, functionName: "performanceFeeBps" },
+      {
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: "performanceFeeBps",
+      },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "tokenId" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "token0" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "token1" },
@@ -25,6 +44,9 @@ export function useVaultState(vaultAddress: `0x${string}`) {
   });
 
   const data = results.data;
+
+  console.log(data, "vault state data");
+
   const tokenId = data?.[6]?.result as bigint | undefined;
   const initialized = tokenId !== undefined && tokenId !== BigInt(0);
 
@@ -45,7 +67,10 @@ export function useVaultState(vaultAddress: `0x${string}`) {
   };
 }
 
-export function usePoolState(vaultAddress: `0x${string}`, initialized: boolean) {
+export function usePoolState(
+  vaultAddress: `0x${string}`,
+  initialized: boolean,
+) {
   const chainId = useChainId();
   const vaultLensAddress = getVaultLensAddress(chainId);
 
@@ -73,16 +98,23 @@ export function usePoolState(vaultAddress: `0x${string}`, initialized: boolean) 
     query: { enabled: initialized, refetchInterval: 5_000 },
   });
 
-  const poolData = poolState.data as
-    | { sqrtPriceX96: bigint; tick: number }
-    | undefined;
+  // getPoolState has two separate named outputs (not a single tuple), so viem
+  // decodes it as a positional array [sqrtPriceX96, tick] rather than an object.
+  const poolData = poolState.data as [bigint, number] | undefined;
   const posData = position.data as
-    | { token0: string; token1: string; tickSpacing: number; tickLower: number; tickUpper: number; liquidity: bigint }
+    | {
+        token0: string;
+        token1: string;
+        tickSpacing: number;
+        tickLower: number;
+        tickUpper: number;
+        liquidity: bigint;
+      }
     | undefined;
 
   return {
-    sqrtPriceX96: poolData?.sqrtPriceX96,
-    currentTick: poolData?.tick,
+    sqrtPriceX96: poolData?.[0],
+    currentTick: poolData?.[1],
     tickLower: posData?.tickLower,
     tickUpper: posData?.tickUpper,
     liquidity: posData?.liquidity,
@@ -91,7 +123,10 @@ export function usePoolState(vaultAddress: `0x${string}`, initialized: boolean) 
   };
 }
 
-export function useVaultMetrics(vaultAddress: `0x${string}`, initialized: boolean) {
+export function useVaultMetrics(
+  vaultAddress: `0x${string}`,
+  initialized: boolean,
+) {
   const chainId = useChainId();
   const vaultLensAddress = getVaultLensAddress(chainId);
 
@@ -104,7 +139,14 @@ export function useVaultMetrics(vaultAddress: `0x${string}`, initialized: boolea
   });
 
   const data = result.data as
-    | { tvl: bigint; tickLower: number; tickUpper: number; rebalanceCount: bigint; totalFees0Earned: bigint; totalFees1Earned: bigint }
+    | {
+        tvl: bigint;
+        tickLower: number;
+        tickUpper: number;
+        rebalanceCount: bigint;
+        totalFees0Earned: bigint;
+        totalFees1Earned: bigint;
+      }
     | undefined;
 
   return {
@@ -147,12 +189,42 @@ export function useUserPosition(
 
   const results = useReadContracts({
     contracts: [
-      { address: vaultAddress, abi: VAULT_ABI, functionName: "balanceOf", args: address ? [address] : undefined },
-      { address: vaultAddress, abi: VAULT_ABI, functionName: "maxRedeem", args: address ? [address] : undefined },
-      { address: token0Address, abi: ERC20_ABI, functionName: "balanceOf", args: address ? [address] : undefined },
-      { address: token1Address, abi: ERC20_ABI, functionName: "balanceOf", args: address ? [address] : undefined },
-      { address: token0Address, abi: ERC20_ABI, functionName: "allowance", args: address ? [address, vaultAddress] : undefined },
-      { address: token1Address, abi: ERC20_ABI, functionName: "allowance", args: address ? [address, vaultAddress] : undefined },
+      {
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: "balanceOf",
+        args: address ? [address] : undefined,
+      },
+      {
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: "maxRedeem",
+        args: address ? [address] : undefined,
+      },
+      {
+        address: token0Address,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: address ? [address] : undefined,
+      },
+      {
+        address: token1Address,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: address ? [address] : undefined,
+      },
+      {
+        address: token0Address,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: address ? [address, vaultAddress] : undefined,
+      },
+      {
+        address: token1Address,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: address ? [address, vaultAddress] : undefined,
+      },
     ],
     query: {
       enabled: !!(address && token0Address && token1Address),
