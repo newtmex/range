@@ -16,13 +16,18 @@ interface RevealProps {
   className?: string;
 }
 
-/** Fades + slides content up once it scrolls into view. Skips the animation entirely under prefers-reduced-motion. */
+/**
+ * Fades + slides content up once it scrolls into view. Collapses to an instant
+ * (zero-duration) transition under prefers-reduced-motion rather than branching
+ * to a plain `<div>` — `useReducedMotion()` can't resolve during SSR (no
+ * `window`), so branching the rendered element type caused a server/client
+ * hydration mismatch for any visitor whose browser prefers reduced motion.
+ * Always rendering the same `motion.div` with the same `initial` variant keeps
+ * the server- and client-rendered markup identical; only the transition timing
+ * (which never affects the initial static style) varies.
+ */
 export function Reveal({ children, delay = 0, className }: RevealProps) {
   const reduceMotion = useReducedMotion();
-
-  if (reduceMotion) {
-    return <div className={className}>{children}</div>;
-  }
 
   return (
     <motion.div
@@ -31,7 +36,7 @@ export function Reveal({ children, delay = 0, className }: RevealProps) {
       whileInView="visible"
       viewport={{ once: true, margin: "-80px" }}
       variants={variants}
-      transition={{ duration: 0.45, delay, ease: EASE }}
+      transition={{ duration: reduceMotion ? 0 : 0.45, delay: reduceMotion ? 0 : delay, ease: EASE }}
     >
       {children}
     </motion.div>
