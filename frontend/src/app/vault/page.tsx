@@ -1,0 +1,161 @@
+"use client";
+
+import { useRouter, useSearchParams } from "next/navigation";
+import { useChainId } from "wagmi";
+import { Suspense, useCallback } from "react";
+import { Header } from "@/components/ui/header";
+import { VaultStats } from "@/components/VaultStats";
+import { DepositWithdraw } from "@/components/DepositWithdraw";
+import { PriceRangeCard } from "@/components/PriceRangeCard";
+import { UserPosition } from "@/components/UserPosition";
+import { RebalanceHistory } from "@/components/RebalanceHistory";
+import { Footer } from "@/components/ui/footer";
+import { StrategySelector } from "@/components/StrategySelector";
+import { useVaultPage } from "@/hooks/useVaultPage";
+import {
+  getStrategyVaultAddress,
+  resolveStrategy,
+  type StrategyKey,
+} from "@/lib/strategies";
+
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <VaultPageContent />
+    </Suspense>
+  );
+}
+
+function VaultPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const chainId = useChainId();
+  const strategyKey = resolveStrategy(searchParams.get("strategy"));
+  const vaultAddress = getStrategyVaultAddress(chainId, strategyKey);
+
+  const {
+    isConnected,
+    sym0,
+    sym1,
+    symMusd,
+    vaultSymbol,
+    d0,
+    d1,
+    vault,
+    pool,
+    user,
+    events,
+    apy,
+    tvlMusd,
+    feesMusd,
+    sharePriceMusd,
+    rebalanceCount,
+    tickLower,
+    tickUpper,
+  } = useVaultPage(vaultAddress);
+
+  const handleStrategySelect = useCallback(
+    (key: StrategyKey) => {
+      router.push(`?strategy=${key}`);
+    },
+    [router],
+  );
+
+  return (
+    <div className="min-h-dvh">
+      <Header />
+
+      <main className="max-w-5xl mx-auto px-4 sm:px-5 py-6 sm:py-8 space-y-5 sm:space-y-6">
+        <div className="animate-in">
+          <h1
+            className="text-[26px] sm:text-3xl font-bold tracking-tight"
+            style={{ color: "var(--text)" }}
+          >
+            {sym0} / {sym1} Vault
+          </h1>
+          <p className="mt-1.5 text-sm sm:text-[15px]" style={{ color: "var(--text-2)" }}>
+            Deposit tokens and earn trading fees automatically.
+          </p>
+        </div>
+
+        {/* Strategy selector */}
+        <StrategySelector
+          selected={strategyKey}
+          onSelect={handleStrategySelect}
+        />
+
+        {/* Stats — full width */}
+        <VaultStats
+          tvlMusd={tvlMusd}
+          sharePriceMusd={sharePriceMusd}
+          feesMusd={feesMusd}
+          symMusd={symMusd}
+          performanceFeeBps={vault.performanceFeeBps}
+          paused={vault.paused}
+          isLoading={vault.isLoading}
+          apy={apy}
+          rebalanceCount={rebalanceCount}
+          tickLower={tickLower}
+          tickUpper={tickUpper}
+        />
+
+        {/* 2-column layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 items-start">
+          {/* Left: Deposit/Withdraw + Price Range */}
+          <div className="space-y-6">
+            <DepositWithdraw
+              vaultAddress={vaultAddress}
+              paused={vault.paused}
+              initialized={vault.initialized}
+              token0Address={vault.token0Address}
+              token1Address={vault.token1Address}
+              decimals0={d0}
+              decimals1={d1}
+              symbol0={sym0}
+              symbol1={sym1}
+              vaultSymbol={vaultSymbol}
+              balance0={user.balance0}
+              balance1={user.balance1}
+              allowance0={user.allowance0}
+              allowance1={user.allowance1}
+              maxRedeem={user.maxRedeem}
+              isConnected={isConnected}
+            />
+            <PriceRangeCard
+              initialized={vault.initialized}
+              currentTick={pool.currentTick}
+              tickLower={pool.tickLower}
+              tickUpper={pool.tickUpper}
+              isOutOfRange={pool.isOutOfRange}
+              decimals0={d0}
+              decimals1={d1}
+              symbol0={sym0}
+              symbol1={sym1}
+            />
+          </div>
+
+          {/* Right: User position + History */}
+          <div className="space-y-6">
+            <UserPosition
+              vaultAddress={vaultAddress}
+              shares={user.shares}
+              symbol0={sym0}
+              decimals0={d0}
+              isConnected={isConnected}
+            />
+            <RebalanceHistory
+              rebalances={events.rebalances}
+              isLoading={events.isLoading}
+              decimals0={d0}
+              decimals1={d1}
+              symbol0={sym0}
+              symbol1={sym1}
+            />
+          </div>
+        </div>
+
+        <Footer />
+      </main>
+    </div>
+  );
+}

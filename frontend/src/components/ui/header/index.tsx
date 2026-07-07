@@ -7,7 +7,7 @@ import { Menu, X, BookOpen, Droplets, Compass, ChevronRight } from "lucide-react
 import { WalletSection } from "./WalletSection";
 import { NetworkSwitcher } from "./NetworkSwitcher";
 
-function LogoMark({ size = 32 }: { size?: number }) {
+export function LogoMark({ size = 32 }: { size?: number }) {
   return (
     <span
       className="flex items-center justify-center rounded-xl flex-shrink-0"
@@ -29,9 +29,9 @@ function LogoMark({ size = 32 }: { size?: number }) {
   );
 }
 
-function Logo() {
+export function Logo({ href = "/vault" }: { href?: string }) {
   return (
-    <a href="/" aria-label="Range — home" className="tap flex items-center gap-2.5 flex-shrink-0 rounded-lg">
+    <a href={href} aria-label="Range — home" className="tap flex items-center gap-2.5 flex-shrink-0 rounded-lg">
       <LogoMark />
       <span className="font-bold text-[17px] tracking-tight" style={{ color: "var(--text)" }}>
         Range
