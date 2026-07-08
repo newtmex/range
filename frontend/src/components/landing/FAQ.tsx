@@ -29,12 +29,8 @@ const FAQS = [
       "A same-block guard prevents deposits and withdrawals from executing in the same block as a rebalance, so your transaction simply lands in the next block rather than colliding with keeper activity.",
   },
   {
-    question: "Is the protocol audited?",
-    answer:
-      "There is no third-party audit on record yet. The contracts implement a set of on-chain mitigations instead — reentrancy guards, TWAP-anchored pricing, timelocked fee changes, an emergency pause, and inflation-attack resistance. See the Security & Trust section above, and the contracts are open-source on GitHub.",
-  },
-  {
-    question: "What's the difference between the Tight, Medium, and Wide strategies?",
+    question:
+      "What's the difference between the Tight, Medium, and Wide strategies?",
     answer:
       "They set how narrow the LP range is around the current price. Tight ranges capture more fees per dollar deposited but rebalance more often; Wide ranges rebalance less often but capture fewer fees per dollar. Medium balances the two.",
   },
@@ -48,7 +44,10 @@ export function FAQ() {
     <section id="faq" className="max-w-5xl mx-auto px-4 sm:px-5 py-16 sm:py-24">
       <Reveal className="max-w-xl">
         <span className="label">FAQ</span>
-        <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight" style={{ color: "var(--text)" }}>
+        <h2
+          className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight"
+          style={{ color: "var(--text)" }}
+        >
           Frequently asked questions
         </h2>
       </Reveal>
@@ -65,15 +64,24 @@ export function FAQ() {
                   aria-expanded={isOpen}
                   className="tap w-full flex items-center justify-between gap-4 px-5 py-4 text-left"
                 >
-                  <span className="font-semibold text-[15px]" style={{ color: "var(--text)" }}>
+                  <span
+                    className="font-semibold text-[15px]"
+                    style={{ color: "var(--text)" }}
+                  >
                     {faq.question}
                   </span>
                   <motion.span
                     animate={{ rotate: isOpen ? 180 : 0 }}
-                    transition={{ duration: reduceMotion ? 0 : 0.25, ease: EASE }}
+                    transition={{
+                      duration: reduceMotion ? 0 : 0.25,
+                      ease: EASE,
+                    }}
                     className="flex-shrink-0"
                   >
-                    <ChevronDown className="w-4 h-4" style={{ color: "var(--text-3)" }} />
+                    <ChevronDown
+                      className="w-4 h-4"
+                      style={{ color: "var(--text-3)" }}
+                    />
                   </motion.span>
                 </button>
                 <AnimatePresence initial={false}>
@@ -83,10 +91,16 @@ export function FAQ() {
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: reduceMotion ? 0 : 0.3, ease: EASE }}
+                      transition={{
+                        duration: reduceMotion ? 0 : 0.3,
+                        ease: EASE,
+                      }}
                       style={{ overflow: "hidden" }}
                     >
-                      <p className="px-5 pb-5 text-sm leading-relaxed" style={{ color: "var(--text-2)" }}>
+                      <p
+                        className="px-5 pb-5 text-sm leading-relaxed"
+                        style={{ color: "var(--text-2)" }}
+                      >
                         {faq.answer}
                       </p>
                     </motion.div>
