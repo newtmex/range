@@ -26,7 +26,8 @@ export const mezoMainnet = defineChain({
   rpcUrls: {
     default: {
       http: [
-        "https://mainnet.mezo.public.validationcloud.io",
+        process.env.NEXT_PUBLIC_MEZO_RPC_URL ||
+          "https://mainnet.mezo.public.validationcloud.io",
         "https://mezo.drpc.org",
       ],
     },
