@@ -10,8 +10,8 @@ import {
   useVaultMetrics,
 } from "@/hooks/useVault";
 import { useVaultEvents } from "@/hooks/useVaultEvents";
+import { useVaultApy } from "@/hooks/useVaultApy";
 import {
-  computeAPY,
   isMusdToken0,
   tickToPrice,
   toMusdFromToken0,
@@ -80,7 +80,14 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
         )
       : undefined;
 
-  const apy = computeAPY(feesMusd, tvlMusd, events.firstEventTimestamp);
+  const apy = useVaultApy(
+    vaultAddress,
+    chainId,
+    events.firstEventTimestamp,
+    d0,
+    d1,
+    isToken0Musd,
+  );
 
   return {
     isConnected,

@@ -6,18 +6,25 @@ export const STRATEGY_META = {
   tight: {
     label: "Tight",
     description: "Narrow range, higher fees, more rebalances",
+    enabled: true,
   },
   medium: {
     label: "Medium",
     description: "Balanced range and rebalance frequency",
+    enabled: false,
   },
   wide: {
     label: "Wide",
     description: "Wide range, lower fees, fewer rebalances",
+    enabled: false,
   },
 } as const;
 
 export type StrategyKey = keyof typeof STRATEGY_META;
+
+export const ENABLED_STRATEGY_KEYS = (
+  Object.keys(STRATEGY_META) as StrategyKey[]
+).filter((key) => STRATEGY_META[key].enabled);
 
 const STRATEGY_ADDRESSES: Record<number, Record<StrategyKey, `0x${string}`>> = {
   [MEZO_TESTNET_ID]: {
@@ -52,6 +59,11 @@ export function getStrategyVaultAddress(
 export const DEFAULT_STRATEGY: StrategyKey = "tight";
 
 export function resolveStrategy(param: string | null): StrategyKey {
-  if (param === "medium" || param === "wide" || param === "tight") return param;
+  if (
+    (param === "medium" || param === "wide" || param === "tight") &&
+    STRATEGY_META[param].enabled
+  ) {
+    return param;
+  }
   return DEFAULT_STRATEGY;
 }

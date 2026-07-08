@@ -150,14 +150,90 @@ export function combineFeesToMusd(
   return fee0 * price + fee1;
 }
 
-export function computeAPY(
-  feesMusd: number | undefined,
-  tvlMusd: number | undefined,
-  firstEventTimestamp: number | undefined,
-): number | undefined {
-  if (!feesMusd || !tvlMusd || tvlMusd === 0) return undefined;
-  if (!firstEventTimestamp) return undefined;
-  const elapsedDays = (Date.now() / 1000 - firstEventTimestamp) / 86400;
-  if (elapsedDays < 0.01) return undefined;
-  return (feesMusd / tvlMusd) * (365 / elapsedDays) * 100;
+const SECONDS_PER_YEAR = 31_536_000;
+/**
+ * Beyond this magnitude, a compounded short-window estimate is more likely a
+ * sampling artifact (a BTC/MUSD price swing mismarked as yield, a single
+ * anomalous block) than real, projectable yield. Show "insufficient data"
+ * instead of a specific misleading number. Chosen to comfortably admit a
+ * legitimately high APY on a small, young, fee-heavy vault while rejecting
+ * the 4-5 digit values that a compounded 1-2%/day price move produces.
+ */
+const MAX_SANE_APY_PERCENT = 1000;
+const MIN_SANE_APY_PERCENT = -90;
+
+export interface ApySample {
+  /** Unix seconds. */
+  timestamp: number;
+  /** Per-share value, converted to MUSD using this sample's own pool price. */
+  shareValueMusd: number;
+  /** Vault TVL at this sample, in any unit consistent across all samples (used only as a relative weight). */
+  tvl: number;
+}
+
+/**
+ * Trailing APY from a series of vault snapshots, per vaults.fyi's
+ * methodology: pairwise growth ratios between CONSECUTIVE samples are
+ * averaged, weighted by each pair's smaller TVL (a conservative choice that
+ * avoids inflating yield during large inflows), then the resulting average
+ * per-interval rate is compounded at that same cadence to annualize:
+ * APY = (1 + rate)^(year/interval) - 1.
+ *
+ * This is far more robust to one anomalous sample (e.g. a single large swap
+ * briefly moving price) than comparing just two window endpoints, since that
+ * sample only ever contributes one of many pairwise comparisons. It does
+ * NOT fully protect against a genuine sustained price trend across the whole
+ * window — compounding any real short-window return to a full year is
+ * inherently explosive — so the result is additionally bounded to a sane
+ * display range (see MAX/MIN_SANE_APY_PERCENT) as a final backstop.
+ *
+ * Callers must convert each sample's share price (denominated in token0
+ * units, e.g. BTC on mainnet) to MUSD via toMusdFromToken0 using THAT
+ * sample's own pool price before calling this — see toMusdFromToken0's
+ * doc comment for why an unconverted ratio would conflate real return with
+ * token0/token1 price movement.
+ *
+ * `samples` must be sorted ascending by timestamp and contain at least 2 entries.
+ */
+export function computeTrailingApy(samples: ApySample[]): number | undefined {
+  if (samples.length < 2) return undefined;
+
+  let weightedRatioSum = 0;
+  let weightSum = 0;
+  let intervalSecondsSum = 0;
+  let intervalCount = 0;
+
+  for (let i = 1; i < samples.length; i++) {
+    const prev = samples[i - 1];
+    const cur = samples[i];
+    if (prev.shareValueMusd <= 0) continue;
+    const ratio = cur.shareValueMusd / prev.shareValueMusd;
+    if (!isFinite(ratio)) continue;
+    const weight = Math.min(prev.tvl, cur.tvl);
+    if (weight <= 0) continue;
+
+    weightedRatioSum += ratio * weight;
+    weightSum += weight;
+    intervalSecondsSum += cur.timestamp - prev.timestamp;
+    intervalCount += 1;
+  }
+
+  if (weightSum <= 0 || intervalCount === 0) return undefined;
+
+  const avgRate = weightedRatioSum / weightSum - 1;
+  if (avgRate <= -1) return undefined;
+
+  const avgIntervalSeconds = intervalSecondsSum / intervalCount;
+  if (avgIntervalSeconds <= 0) return undefined;
+
+  const periodsPerYear = SECONDS_PER_YEAR / avgIntervalSeconds;
+  const apy = (Math.pow(1 + avgRate, periodsPerYear) - 1) * 100;
+  if (
+    !isFinite(apy) ||
+    apy > MAX_SANE_APY_PERCENT ||
+    apy < MIN_SANE_APY_PERCENT
+  )
+    return undefined;
+  console.log("computeTrailingApy", { avgRate, periodsPerYear, apy });
+  return apy;
 }

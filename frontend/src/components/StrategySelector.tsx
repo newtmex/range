@@ -1,6 +1,6 @@
 "use client";
 
-import { STRATEGY_META, StrategyKey } from "@/lib/strategies";
+import { ENABLED_STRATEGY_KEYS, STRATEGY_META, StrategyKey } from "@/lib/strategies";
 
 interface Props {
   selected: StrategyKey;
@@ -11,8 +11,11 @@ export function StrategySelector({ selected, onSelect }: Props) {
   return (
     <div className="space-y-2">
       <span className="label">Strategy</span>
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
-        {(Object.keys(STRATEGY_META) as StrategyKey[]).map((key) => {
+      <div
+        className="grid gap-2.5 sm:gap-3"
+        style={{ gridTemplateColumns: `repeat(${ENABLED_STRATEGY_KEYS.length}, minmax(0, 1fr))` }}
+      >
+        {ENABLED_STRATEGY_KEYS.map((key) => {
           const s = STRATEGY_META[key];
           const isActive = selected === key;
           return (
