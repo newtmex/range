@@ -1,20 +1,20 @@
 # X-Ray Report
 
-> Mezo Rebalancer Vault | 2342 nSLOC | 440af78ed (`main`) | Foundry | 01/07/26
+> Range (Rebalancer Vault) | 1954 nSLOC | 76c23242 (`main`) | Foundry | 09/07/26
 
-Analyzed branch: `main` at `440af78ed`.
+Analyzed branch: `main` at `76c232420`.
 
 ---
 
 ## 1. Protocol Overview
 
-**What it does:** An ERC-4626 vault that holds a single concentrated-liquidity (Uniswap-V3-style) position on a pool and lets a keeper rebalance the range around the TWAP tick, auto-compounding swap fees for share holders.
+**What it does:** An ERC-4626 vault that holds a single concentrated-liquidity NFT position on Mezo's Uniswap-V3-compatible DEX and has an off-chain keeper rebalance it back into range, compounding fees.
 
-- **Users**: LPs deposit token0 (or token1) and receive vault shares; redeem for the pro-rata underlying.
-- **Core flow**: `deposit` → keeper `rebalance` centers the CL range on TWAP and swaps to the target ratio → `withdraw/redeem` unwinds the position.
-- **Key mechanism**: Single active CL NFT position; range = `[floor(twap-halfWidth), ceil(twap+halfWidth)]`; all pricing/valuation via pool TWAP, spot only gated against TWAP.
-- **Token model**: `token0` = ERC-4626 asset; `token1` = pool counter-asset; shares are the vault ERC-20. 1000 `DEAD_SHARES` burned to `0xdead` on first deposit.
-- **Admin model**: Per-vault `owner` (config + upgrades via beacon), `operator` (rebalance/collect), `guardian` (pause; set to the Factory). Factory owner deploys vaults and controls the shared beacon implementation.
+- **Users**: LPs deposit token0 (MUSD) or token1 (BTC), receive vault shares; a keeper rebalances.
+- **Core flow**: `deposit` → shares; keeper `rebalance()` removes/re-mints the LP position around the current TWAP tick.
+- **Key mechanism**: TWAP-anchored range selection + on-chain-derived slippage floors; one live position per vault.
+- **Token model**: ERC-4626 shares (asset = token0); underlying = a CL pool pair (MUSD/BTC on mainnet).
+- **Admin model**: per-vault `owner` (config, instant), `operator` (keeper), `guardian` (= factory, pause); `VaultFactory` is an `UpgradeableBeacon` whose owner can upgrade every vault.
 
 For a visual overview of the protocol's architecture, see the [architecture diagram](architecture.svg).
 
@@ -22,67 +22,65 @@ For a visual overview of the protocol's architecture, see the [architecture diag
 
 | Subsystem | Key Contracts | nSLOC | Role |
 |-----------|--------------|------:|------|
-| Vault core | RebalancerVaultUpgradeable | 1101 | ERC-4626 vault, deposits/withdraws, rebalance, admin, valuation |
-| Factory | VaultFactory | 174 | Beacon + BeaconProxy deployer, guardian pause fan-out |
-| DEX seam | CLDexAdapter | 136 | Stateless delegatecall/staticcall adapter to pool/position-manager/router |
-| Math/oracle libs | VaultMath, OracleLib, VaultStorageLib | 234 | TWAP, tick math, slippage, ERC-7201 storage |
-| Strategy | Strategy | 27 | Stateless range + optimal-swap module (re-validated by vault) |
-| View | VaultLens | 150 | Off-chain read helper (share price, position, rebalance params) |
+| Vault core | RebalancerVaultUpgradeable | 1192 | ERC-4626 vault, deposit/withdraw/redeem, rebalance, admin, delegatecall plumbing |
+| Factory / upgrade | VaultFactory | 174 | Beacon + deployer; guardian pause fan-out; per-(pool,strategy) registry |
+| DEX seam | CLDexAdapter | 153 | Stateless staticcall/delegatecall adapter over pool + position manager + router |
+| Pricing libs | OracleLib, VaultMath | 195 | TWAP read + spot-deviation check; token conversions, slippage, optimal-swap math |
+| Storage / strategy | VaultStorageLib, Strategy | 73 | ERC-7201 namespaced storage; range picker (halfWidth) |
+| View | VaultLens | 167 | Off-chain metrics + rebalance/deployIdle param computation |
+
+*Vendored: `UniswapV3Math.sol` (415 nSLOC) — local 0.8 shim of Uniswap V3 FullMath/TickMath/LiquidityAmounts, excluded from authored scope (see §6 Forked Dependencies).*
 
 ### How It Fits Together
 
-The core trick: the vault never trusts spot price for value — everything is priced from the pool TWAP, and spot is only allowed to *transact* when it sits within `maxTwapDeviationTicks` of that TWAP.
+The core trick: user funds are held as **one** CL position plus idle balances, valued in token0 through a manipulation-resistant **TWAP** (never spot), and every value-moving action re-checks that spot sits within `maxTwapDeviationTicks` of that TWAP.
 
 ### Deposit
 
 ```
-Vault.deposit(assets, receiver)
-├─ _requireSpotNearTwap()          — reverts if spot deviates from TWAP (G-21)
-├─ lastDepositBlock[receiver]=block.number   — same-block withdraw guard
-├─ IERC20(token0).safeTransferFrom(sender → vault)
-└─ _mint(receiver, shares)         — first deposit burns 1000 DEAD_SHARES to 0xdead
+deposit(assets, receiver)
+  ├─ OracleLib.requireSpotNearTwap()        // reverts if spot far from TWAP
+  ├─ lastDepositBlock[receiver] = block.number
+  ├─ totalValBefore = _totalVaultValueInToken0()   // TWAP-valued, snapshot BEFORE transfer
+  ├─ token0.safeTransferFrom(sender → vault)
+  └─ supply==0 ? mint 1000 dead shares + (assets-1000)
+              : mint assets*supply/totalValBefore   // idle, deployed later by keeper
 ```
-*Funds sit idle until a rebalance folds them into the position.*
+*First deposit burns 1000 dead shares to `0xdead`; shares mint on token0-denominated TWAP value, not `balanceOf`.*
 
-### Rebalance (operator)
-
-```
-Vault.rebalance(swapZeroForOne, swapAmount)
-├─ _requireSpotNearTwap()
-├─ _rebalanceRemoveFeeCollectBurn()
-│   ├─ CLDexAdapter.decreaseLiquidity() [delegatecall]   — pulls principal
-│   ├─ feesOwed = tokensOwed - principal                  — uint128 subtraction (I-13)
-│   ├─ _deductPerformanceFee() → safeTransfer to feeRecipient
-│   ├─ CLDexAdapter.collect() [delegatecall]
-│   └─ CLDexAdapter.burn() [delegatecall]
-├─ _executeSwap()                   — minOut from TWAP·slippageBps
-└─ _rebalanceMintNew()
-    ├─ IStrategy.computeRange(twapTick, spacing) → re-validated (G-20)
-    └─ CLDexAdapter.mint() [delegatecall]   — new NFT, tokenId updated
-```
-*Writes execute in the vault's context via `delegatecall`, so tokens/NFT/approvals stay in the vault.*
-
-### Redeem
+### Rebalance (keeper)
 
 ```
-Vault.redeem(shares, receiver, owner_)
-├─ same-block guard, _requireSpotNearTwap()
-├─ _removeProportionalLiquidity()   — decreaseLiquidity(pro-rata) + collect(ALL fees)
-├─ separate principal (p0/p1) from swept fees, credit redeemer only pro-rata fee share
-├─ _burn(owner_, shares)
-└─ safeTransfer token0 + token1 to receiver   — paid in kind, both legs
+rebalance(swapZeroForOne, swapAmount)
+  ├─ requireSpotNearTwap()
+  ├─ _rebalanceRemoveFeeCollectBurn(oldTokenId)
+  │     ├─ decreaseLiquidity(all)  ── TWAP-derived amountMin (delegatecall adapter)
+  │     ├─ feesOwed = tokensOwed - principal      // fee/principal isolation
+  │     ├─ collect() → _deductPerformanceFee()    // fee → feeRecipient
+  │     └─ burn(oldTokenId)
+  ├─ _executeSwap(swapAmount, minOut=TWAP+slippage)   // keeper picks dir/amount; minOut on-chain
+  └─ _rebalanceMintNew: Strategy.computeRange(twapTick) → vault re-validates → mint new position
 ```
-*`assets` return value converts the token1 leg at TWAP; the payout itself is in-kind.*
+*Keeper controls swap direction/amount but not the min-out floor — that is derived on-chain from TWAP + `slippageBps`.*
 
-### Factory deploy + seed
+### Withdraw vs Redeem
 
 ```
-VaultFactory.deploySeedAndInitialize()
-├─ _deploy() → new BeaconProxy(beacon, initData)   — initialize() runs in ctor
-├─ safeTransferFrom(seeder → factory) → deposit(seed)
-├─ v.initializePosition(...)        — mints first CL position
-└─ v.transferOwnership(realOwner)   — factory hands off (two-step: pending)
+withdraw(assets,…)  → remove pro-rata liquidity → collect ALL fees → fee on (swept-principal)
+                    → burn shares → if idle token0 < assets: swap token1→token0 → transfer token0
+redeem(shares,…)    → remove pro-rata liquidity → fee on (swept-principal)
+                    → burn shares → pay user BOTH token0 and token1 (pro-rata idle + freed)
 ```
+*`withdraw` guarantees exact token0 (may swap); `redeem` pays whatever mix the position yields — the two exit paths use different accounting.*
+
+### Delegatecall adapter seam
+
+```
+vault._delegateAdapter(mint/increase/decrease/collect/burn/swap)
+  └─ dexAdapter.delegatecall(...)   // runs in VAULT context: tokens, NFT, approvals stay in vault
+     └─ CLDexAdapter (stateless) → PositionManager / SwapRouter
+```
+*The adapter must declare no storage; `setDexAdapter` (owner) can repoint this delegatecall target.*
 
 ---
 
@@ -90,110 +88,109 @@ VaultFactory.deploySeedAndInitialize()
 
 ### Protocol Threat Profile
 
-> Protocol classified as: **Yield Aggregator / Vault (ERC-4626)** with **DEX/AMM (concentrated-liquidity manager)** characteristics
+> Protocol classified as: **Yield Aggregator / Vault (ERC-4626)** with **DEX/AMM (concentrated liquidity)** characteristics
 
-Signals: `deposit`/`withdraw`/`convertToShares`/`totalAssets` (ERC-4626) plus a single managed CL position, `sqrtPriceX96`/`tick`/TWAP observation and `exactInputSingle` swaps (AMM). It is an automated liquidity manager: user-facing vault accounting on top of an AMM position, so first-depositor inflation, donation/valuation, TWAP manipulation, and keeper/admin trust dominate.
+ERC-4626 deposit/withdraw/convert wiring + single-position share accounting is the primary shape; the underlying value is a Uniswap-V3-style CL position (tick ranges, `sqrtPriceX96`, LP NFT), so AMM adversaries (spot manipulation, sandwich, empty-pool) apply to the pricing layer.
 
 ### Actors & Adversary Model
 
 | Actor | Trust Level | Capabilities |
 |-------|-------------|-------------|
-| Owner (per vault) | Trusted | Instant: `setStrategy`, `setDexAdapter` (repoint delegatecall target — full fund control), `setOperator`, `setGuardian`, `setPaused`, `sweepToken` (non-core only), all TWAP/slippage params, `initializePosition`. Fee changes 2-day timelocked. No timelock on the rest. |
-| Factory Owner | Trusted | Deploys vaults; controls the shared **beacon implementation** (`upgradeTo`) — instant upgrade of every vault. |
-| Operator | Bounded (rebalance/collect only, gated by spot-near-TWAP + on-chain slippage floors) | `rebalance`, `collectFees`. Cannot set min amounts freely (computed on-chain). Subject to `whenNotPaused`. |
-| Guardian (= Factory) | Bounded (pause only) | `pauseByGuardian` / `pauseAll`. Cannot unpause (owner-only) or move funds. |
-| Depositor / share owner | Untrusted | `deposit`/`mint`/`depositToken1`/`withdraw`/`redeem`. Same-block deposit→withdraw blocked. |
+| Owner (per vault) | Trusted | Instant: setOperator/Guardian/**Strategy**/**DexAdapter**, setPaused, sweepToken, twap/deviation/slippage params, initializePosition. Fee change only is 2-day timelocked. No delay on adapter/strategy repointing. |
+| Operator (keeper) | Bounded (can only rebalance/deployIdle/collect with on-chain TWAP+slippage floors; cannot set min-out) | Chooses swap direction/amount each rebalance; subject to `whenNotPaused`. |
+| Guardian | Bounded (can only pause) | `pauseByGuardian` / factory `pauseAll`. On mainnet guardian = factory. |
+| Factory owner | Trusted | `deployVault`, `deploySeedAndInitialize`, `setGuardian`, and **`upgradeTo` — instant beacon upgrade of every vault** (no timelock). |
+| feeRecipient | Untrusted sink | Receives performance-fee transfers; no callback path. |
+| User / LP | Untrusted | deposit/mint/withdraw/redeem/depositToken1, permissionless within TWAP guard. |
 
 **Adversary Ranking:**
 
-1. **Malicious first depositor / donation attacker** — Manipulates share price on the empty vault or via direct token transfer into `totalAssets`'s `balanceOf` reads.
-2. **TWAP manipulator** — All valuation and swap floors derive from pool TWAP; a thin/short-history pool or seeded observations shift it.
-3. **Compromised/careless Owner** — `setDexAdapter`/`setStrategy` and the beacon upgrade are instant, full-fund-control levers.
-4. **MEV / sandwich searcher** — Targets the keeper's `rebalance` swap and the `withdraw` shortfall swap.
-5. **Malicious keeper (Operator)** — Bounded by on-chain slippage floors, but chooses rebalance timing and swap direction/amount.
+1. **Donation / first-depositor inflation attacker** — `totalAssets` reads `balanceOf`, so a direct transfer inflates share price against a fixed (not virtual) 1000-dead-share offset.
+2. **Oracle / TWAP manipulator** — the entire pricing and slippage-floor stack rests on the pool's `observe()` TWAP; low pool cardinality or a manipulable TWAP breaks valuation.
+3. **Compromised owner / factory owner** — instant `setDexAdapter` (delegatecall target) and instant beacon `upgradeTo` are unbounded control paths over user funds.
+4. **MEV / sandwich searcher** — keeper `rebalance`/`deployIdle` swap through the public pool; on-chain min-out is the only defense.
+5. **Malicious keeper (bounded)** — picks swap size; bounded by TWAP min-out but can still churn positions / grief.
 
 See [entry-points.md](entry-points.md) for the full permissionless entry point map.
 
 ### Trust Boundaries
 
-- **Owner → vault funds** — `setDexAdapter:921` / `setStrategy:915` repoint a `delegatecall` target executed with vault funds/NFT in scope; only a zero-address check, no timelock. Worst instant action: point adapter at draining code. *Git signal: access_control touched in 7 commits.*
-- **Factory beacon → all vaults** — `UpgradeableBeacon.upgradeTo` (factory owner) instantly swaps the implementation for every deployed vault; single key, no timelock.
-- **Vault → CLDexAdapter (delegatecall)** — adapter is stateless but runs in vault context; correctness of approvals/refunds is fully delegated (X-2).
-- **Vault → pool TWAP** — the sole price source for valuation and slippage floors; `twapSeconds ≥ 60` and deviation gate are the only defenses (X-1).
-- **Guardian seat** — pause is fanned out from the Factory; owner alone can unpause, so a stuck guardian cannot trap funds beyond a pause.
+- **Owner → funds** — `setDexAdapter` repoints the delegatecall target (`RebalancerVaultUpgradeable.sol:1028`); a wrong/malicious adapter runs in vault context. No timelock, no multisig enforced in-code.
+- **Factory owner → all vaults** — `UpgradeableBeacon.upgradeTo` (inherited, `VaultFactory.sol:18`) swaps the implementation for every deployed vault instantly; single highest-blast-radius key. *Git signal: 9 access_control + 12 fund_flows commits touch this surface.*
+- **Fee timelock** — only `performanceFee` changes wait 2 days (`applyPerformanceFee:1049`); every other owner action is instant.
+- **Guardian = factory** — pause is centralized in the factory; a lost factory-owner key still leaves guardian pause reachable only through the factory.
 
 ### Key Attack Surfaces
 
-- **Owner-set delegatecall/strategy targets** &nbsp;&#91;[X-2](invariants.md#x-2)&#93; — `setDexAdapter:921` / `setStrategy:915` change code run against vault funds with no timelock; worth confirming the intended owner is a multisig/timelock and that adapter code is immutable in practice.
+- **`totalAssets` donation sensitivity** &nbsp;&#91;[I-11](invariants.md#i-11), [E-2](invariants.md#e-2)&#93; — `_totalVaultValueInToken0:1119-1144` sums `balanceOf(this)` for both idle legs; worth confirming whether the fixed 1000 dead-share offset withstands a large direct transfer before the second deposit.
 
-- **`totalAssets` uses `balanceOf(this)` for idle legs** &nbsp;&#91;[I-12](invariants.md#i-12), [E-1](invariants.md#e-1)&#93; — `_totalVaultValueInToken0:1010-1047` reads raw balances; worth tracing whether a direct token transfer (donation) between deposits shifts share price beyond the DEAD_SHARES cushion.
+- **TWAP cardinality / staleness** &nbsp;&#91;[X-2](invariants.md#x-2)&#93; — `OracleLib._twapAndSpot:19` calls `observe([twapSeconds,0])` with no cardinality guarantee; worth tracing whether the mainnet pool holds ≥300s of observations (a known cardinality=1 gap) or reverts `OLD` / returns manipulable ticks.
 
-- **All valuation priced at TWAP only** &nbsp;&#91;[X-1](invariants.md#x-1)&#93; — `totalAssets`/`convertTo*`/`maxWithdraw` read TWAP with no spot cross-check in the view path (spot gate is only on the mutating call); worth checking behavior on low-liquidity pools or short observation cardinality.
+- **`setDexAdapter` delegatecall target** &nbsp;&#91;[X-3](invariants.md#x-3)&#93; — `setDexAdapter:1028` + `_delegateAdapter:1322-1332`; worth confirming there is no on-chain constraint (statelessness, allowlist) on the repointed adapter that executes in vault context.
 
-- **Fee-vs-principal uint128 subtraction** &nbsp;&#91;[I-13](invariants.md#i-13)&#93; — `_rebalanceRemoveFeeCollectBurn:802-803` computes `tokensOwed - principal` with no `>=` check; worth confirming position-manager return semantics guarantee `tokensOwed ≥ principal` in all paths.
+- **Beacon upgrade blast radius** — `VaultFactory` extends `UpgradeableBeacon`; worth confirming the intended owner is a timelock/multisig since `upgradeTo` re-implements every vault instantly.
 
-- **`redeem` in-kind token1 leg valued at TWAP** &nbsp;&#91;[E-2](invariants.md#e-2), [X-1](invariants.md#x-1)&#93; — `redeem:558-563` pays token1 directly and reports `assets` via TWAP; worth tracing the fee-vs-principal separation math (`swept0 - p0`) for rounding/under-provision edges.
+- **Withdraw vs redeem accounting divergence** &nbsp;&#91;[E-3](invariants.md#e-3)&#93; — `withdraw:466-519` swaps the token1 shortfall and pays exact token0; `redeem:540-604` pays both tokens pro-rata with separate `freed`/`idleShare` math; worth tracing that the two paths credit the same value per share and that `swept0 - p0` / `tokensOwed0 - principal0` never underflow.
 
-- **Beacon upgrade blast radius** — one `upgradeTo` on the Factory reconfigures every vault's logic instantly; worth confirming upgrade authority and storage-layout discipline (ERC-7201 namespaced storage is used).
+- **Same-block guard keying** &nbsp;&#91;[I-8](invariants.md#i-8)&#93; — `lastDepositBlock` is stamped on `receiver` at deposit but checked on `owner_` at exit (`452`/`530`); worth checking whether share transfers or third-party-receiver deposits bypass the same-block sandwich guard.
 
-- **Keeper rebalance swap MEV** &nbsp;&#91;[I-3](invariants.md#i-3)&#93; — swap `minOut` is TWAP·(1-slippageBps) with slippageBps ≤500; worth checking that the TWAP-derived floor is tight enough on volatile pairs to prevent sandwich extraction.
+- **Rebalance fee-isolation underflow** &nbsp;&#91;[X-1](invariants.md#x-1)&#93; — `feesOwed0 = tokensOwed0 - uint128(principal0)` at `842-843`; worth confirming `tokensOwed` (read after `decreaseLiquidity`) always ≥ the principal returned, across rounding.
+
+- **Keeper swap sizing** — `rebalance`/`deployIdle` accept keeper `swapAmount` and compute `minOut` from TWAP+slippage; worth tracing that an adversarial keeper cannot combine an in-range swap with slippage rounding to leak value within the min-out band.
 
 ### Upgrade Architecture Concerns
 
-- **Beacon proxy, shared implementation** — `VaultFactory is UpgradeableBeacon`; every vault is a `BeaconProxy` pointing at one implementation, so an upgrade is all-or-nothing across vaults (`VaultFactory.sol:18,194`).
-- **Namespaced storage** — `VaultStorageLib` uses an ERC-7201 slot (`mezo.storage.RebalancerVault`), reducing collision risk on upgrade; worth verifying no future field reordering within the struct.
-- **Implementation initializer disabled** — constructor calls `_disableInitializers()` (`:161`); `initialize` is `initializer`-gated and only reachable via the proxy constructor.
+- **Instant beacon upgrade** — `VaultFactory : UpgradeableBeacon`; `upgradeTo` has no timelock; upgrading the shared implementation changes all vaults at once.
+- **ERC-7201 storage layout** — `VaultStorageLib` fixes the namespaced slot; any upgrade must preserve the `VaultStorage` field order (the struct is not a gap-padded layout). Worth checking future implementations against it.
+- **Implementation initializer** — constructor calls `_disableInitializers()` (`164`); `initialize` is `initializer`-gated and driven by the factory, closing the classic uninitialized-implementation window.
 
 ### Protocol-Type Concerns
 
 **As a Yield Vault (ERC-4626):**
-- Share rounding uses `Floor` on deposit/convert (`:303,313`) and `Ceil` on `previewMint`/`previewWithdraw` (`:347,365`); worth confirming direction always favors the vault, especially the `redeem` fee-separation math (`:532-535`).
-- `totalAssets` includes owed fees valued at TWAP; a harvest-sandwich around `rebalance`/`collectFees` is worth checking since fees fold into share value.
+- Fixed dead-share offset (`DEAD_SHARES = 1000`) rather than OZ virtual-asset offset — `I-9`/`E-2`; verify sufficiency against token0 (MUSD) decimals.
+- `previewMint`/`previewWithdraw` return `type(uint256).max` sentinels when `ta==0`/`supply==0` (`347`,`363-365`); confirm callers (factory seed path) never act on the sentinel.
 
-**As a CL Manager (AMM):**
-- `VaultMath.token0ToToken1`/`token1ToToken0` use `mulDiv` on `sqrtPriceX96²` (`:22-43`); worth checking precision/overflow at extreme ticks and for low-decimal tokens (`decimals0/1` read via a `staticcall` that falls back to 18).
-- `computeOptimalSwap` (`VaultMath.sol:45-92`) drives the keeper's swap size; worth checking the in-range value-ratio math for the one-token-balance edge cases it explicitly claims to handle.
+**As a DEX/CL position manager:**
+- token1↔token0 conversion squares `sqrtPrice` in Q96 (`VaultMath.token1ToToken0:27-32`) — for BTC (8 dec) vs MUSD (18 dec) magnitude gaps, confirm no precision truncation in `mulDiv` chains.
+- `computeOptimalSwap` in-range branch (`VaultMath:55-98`) values both legs in token1 units; confirm the target-ratio math cannot return a swap that overshoots and re-crosses the range.
 
 ### Temporal Risk Profile
 
 **Deployment & Initialization:**
-- First-deposit empty-state handled by DEAD_SHARES (`:396`), but `initializePosition` is a separate owner tx — worth confirming the deploy→seed→init sequence (or `deploySeedAndInitialize`) is always used so no vault sits initialized-but-unseeded with a live share price.
-- `initialize` front-running is mitigated: it runs inside the `BeaconProxy` constructor with factory-encoded params (`VaultFactory.sol:175-194`).
+- `deploySeedAndInitialize` seeds via `deposit` then `initializePosition` atomically (`VaultFactory:96-144`), avoiding an empty-vault front-run window; the standalone `deployVault` leaves a vault initialized-but-unseeded until the owner calls `initializePosition` — confirm the first external depositor cannot exploit the pre-position empty state.
 
 **Market Stress:**
-- Under volatility the spot-near-TWAP gate (G-21) blocks deposits/withdraws/rebalance entirely — worth confirming this fail-closed behavior is acceptable (funds locked until spot reconverges) rather than a griefing lever.
-
----
+- Deposits/withdrawals hard-revert when spot deviates > `maxTwapDeviationTicks` from TWAP (`G-20`); during volatility this can *freeze* user exits (fail-closed), a liveness/stress trade-off worth noting.
 
 ### Composability & Dependency Risks
 
 **Dependency Risk Map:**
 
-> **CL Pool (TWAP + slot0)** — via `OracleLib` / `CLDexAdapter.slot0`/`observe`
-> - Assumes: `observe` returns a well-populated observation array; TWAP reflects fair price
-> - Validates: spot-vs-TWAP deviation (G-21); `twapSeconds ≥ 60`; but no observation-cardinality / zero check
-> - Mutability: external pool, immutable per vault (set at init)
-> - On failure: reverts (fail-closed) if `observe` reverts or price deviates
+> **CL Pool (Mezo DEX)** — via `OracleLib.observe` / `CLDexAdapter.slot0`
+> - Assumes: `observe()` returns ≥`twapSeconds` of cumulative ticks; `slot0` spot near TWAP
+> - Validates: spot-vs-TWAP deviation (G-20); zero sqrt price (G-21)
+> - Mutability: external DEX; pool cardinality not controlled by protocol
+> - On failure: reverts (`OLD` on insufficient observations) — fail-closed
 
 > **NonfungiblePositionManager** — via `CLDexAdapter` (delegatecall)
-> - Assumes: standard mint/decrease/collect/burn semantics; `tokensOwed ≥ principal` after decrease
-> - Validates: amount0Min/amount1Min slippage floors; `newLiquidity != 0`
-> - Mutability: external, fixed per vault
-> - On failure: reverts and bubbles up (assembly revert in `_delegateAdapter:1219`)
+> - Assumes: standard UniV3 12-field `positions` tuple; mint/decrease/collect semantics
+> - Validates: `newLiquidity != 0` (G-11); TWAP-derived amountMin on decrease/mint
+> - Mutability: external; adapter re-projects the tuple (X-1)
+> - On failure: delegatecall bubbles revert
 
 > **SwapRouter** — via `CLDexAdapter.exactInputSingle` (delegatecall)
-> - Assumes: honors `amountOutMinimum`; pulls exactly `amountIn`
-> - Validates: `amountOutMinimum` = TWAP-derived floor (I-3)
-> - Mutability: external, fixed per vault
-> - On failure: reverts
+> - Assumes: `exactInputSingle` honors `amountOutMinimum`
+> - Validates: `amountOutMinimum` = TWAP+slippage floor, computed on-chain
+> - Mutability: external
+> - On failure: reverts if min-out unmet
 
 **Token Assumptions** *(unvalidated only)*:
-- Fee-on-transfer token0/token1: `deposit` credits shares against `assets` (the requested amount), not the delta actually received — impact: over-crediting shares if a fee token is used.
-- Rebasing token0/token1: `totalAssets` reads `balanceOf` live, so positive rebases silently accrue to holders and negative rebases understate backing — impact: accounting drift.
-- Decimals: read once via `staticcall` with a fallback to 18 (`_safeDecimals:1168`) — impact if a token mis-reports: valuation scaling error.
+- Fee-on-transfer token0/token1: deposit credits `assets` (not measured delta) — impact: internal accounting > real balance if either asset takes a transfer fee.
+- Rebasing token0/token1: `balanceOf`-based `totalAssets` would drift — impact: share-price accounting error.
+- `_safeDecimals` falls back to 18 on a non-standard `decimals()` (`1275-1281`) — impact: mis-scaled `sharePrice` display if an asset returns non-standard data.
 
 **Shared State Exposure:**
-- The vault both trades on and reads TWAP from the *same* pool; large `rebalance`/`withdraw` swaps move the pool the vault prices against, coupling execution and valuation within nearby blocks.
+- The vault both reads (`observe`/`slot0`) and moves (swap, mint) the same public pool; large rebalance swaps and the vault's own liquidity affect that pool's spot/TWAP that this and any other integrator read.
 
 ---
 
@@ -203,12 +200,12 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 >
 > A dedicated reference file contains the complete invariant analysis — do not look here for the catalog.
 >
-> - **22 Enforced Guards** (`G-1` … `G-22`) — per-call preconditions with Check / Location / Purpose
-> - **14 Single-Contract Invariants** (`I-1` … `I-14`) — Conservation, Bound, Ratio, StateMachine, Temporal
-> - **3 Cross-Contract Invariants** (`X-1` … `X-3`) — TWAP valuation, delegatecall trust, strategy re-validation
-> - **2 Economic Invariants** (`E-1` … `E-2`) — share-price integrity, redeem fairness
+> - **22 Enforced Guards** (`G-1` … `G-22`) — per-call preconditions with `Check` / `Location` / `Purpose`
+> - **15 Single-Contract Invariants** (`I-1` … `I-15`) — Conservation, Bound, Ratio, StateMachine, Temporal
+> - **4 Cross-Contract Invariants** (`X-1` … `X-4`) — caller/callee pairs across scope boundaries
+> - **3 Economic Invariants** (`E-1` … `E-3`) — higher-order properties deriving from `I-N` + `X-N`
 >
-> Every inferred block cites a concrete Δ-pair, guard-lift + write-sites, state edge, or temporal predicate. The **On-chain=No** blocks (I-12, I-13, X-1, X-2, E-1, E-2) are the high-signal ones. Attack-surface bullets above cross-link directly into the relevant blocks.
+> The **On-chain=No** blocks (`I-8`, `I-11`, `X-2`, `X-3`, `E-1`, `E-2`) are the high-signal ones — each is simultaneously an invariant and a potential bug. Attack-surface bullets above cross-link into the relevant blocks.
 
 ---
 
@@ -216,10 +213,10 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 | Aspect | Status | Notes |
 |--------|--------|-------|
-| README | Present | `README.md` (16 KB, protocol-level) |
-| NatSpec | ~21 annotations | Good on interfaces (IStrategy) and key mechanics (redeem fee separation, delegatecall seam); sparse on setters |
-| Spec/Whitepaper | Missing | No dedicated design doc; `docs/` present but not a formal spec |
-| Inline Comments | Adequate | Strong where it matters (valuation, swap-ratio math, delegatecall rationale) |
+| README | Present | `README.md` — thorough: deployed addresses, security table, rebalance steps, keeper bot |
+| NatSpec | ~22 annotations | Good on public entry points and the delegatecall seam; sparse on private math helpers |
+| Spec/Whitepaper | Present (partial) | `PROPERTIES.md` (28 KB) documents intended invariants/properties for the fuzz campaign |
+| Inline Comments | Thorough | Fee-isolation and idle-vs-position rationale well commented in withdraw/redeem/rebalance |
 
 ---
 
@@ -227,117 +224,117 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Test files | 25 | File scan (always reliable) |
-| Test functions | 146 | File scan (always reliable) |
-| Line coverage | Unavailable — 17 of 146 tests fail (fork/balance-setup errors), coverage aborts | Coverage tool (requires passing compile+run) |
+| Test files | 40 | File scan (always reliable) |
+| Test functions | 187 | File scan (always reliable) |
+| Line coverage | Unavailable — 4 tests fail (fork init + zero-address reverts); `forge coverage` aborts | Coverage tool |
 | Branch coverage | Unavailable — same reason | Coverage tool |
 
-25 test files with 146 test functions detected; coverage metrics unavailable because 17 tests currently fail (fork setup `AlreadyInitialized`, `ERC20InsufficientBalance` in position/lifecycle tests, and one `computeMintSlippage` arithmetic underflow). Test *existence* is confirmed by file scan and is independent of these runtime failures.
+*183 of 187 tests pass; the 4 failures are 2 fork tests (`InitializePositionFork` — position already initialized on the live vault) and 2 `BeaconProxyTest` zero-address expectations. Test existence is confirmed by file scan regardless.*
 
 ### Test Depth
 
 | Category | Count | Contracts Covered |
 |----------|-------|-------------------|
-| Unit | ~140 | Vault, Factory, VaultMath, BeaconProxy, Position lifecycle |
-| Fork | 1 | InitializePosition (currently failing) |
+| Unit | ~180 | broad (vault, factory, math, oracle, adapter, view) |
+| Fork | 2 files | Mezo testnet vaults (initialize, upgrade) |
 | Stateless Fuzz | 0 | none |
-| Stateful Fuzz (Foundry) | 0 | none — invariant profile configured in foundry.toml but no `invariant_` tests found |
-| Stateful Fuzz (Echidna) | 0 | none |
-| Stateful Fuzz (Medusa) | 0 | none |
-| Formal Verification (Certora) | 0 | none |
-| Formal Verification (Halmos) | 0 | none |
+| Stateful Fuzz (Foundry) | 0 | none (foundry.toml has an invariant profile but enumeration found 0 invariant test functions) |
+| Stateful Fuzz (Echidna) | 0 functions : 1 config | `echidna.yaml` present, no harness functions detected |
+| Stateful Fuzz (Medusa) | 0 functions : 1 config | `medusa.json` present, no harness functions detected |
+| Formal Verification | 0 | none (Certora/Halmos/HEVM) |
 
 ### Gaps
 
-- **No stateful/invariant fuzzing** despite a configured `[profile.default.invariant]` campaign in `foundry.toml` — highest-priority gap for a share-accounting + AMM-math vault. The declared invariants (I-1, I-10, I-11, X-3) are prime fuzz targets.
-- **No stateless fuzz** on `VaultMath` (`token0ToToken1`, `computeOptimalSwap`, `computeMintSlippage`) — math is the core risk and one unit test already trips an underflow.
-- **No formal verification** of the ERC-4626 round-trip properties (I-11) or fee conservation (I-1).
-- **17 failing tests** including the only fork test — the live-fork valuation/rebalance path is not currently green.
+- **No executable stateful fuzz/invariant tests** despite an invariant profile in `foundry.toml`, `echidna.yaml`, `medusa.json`, and a 28 KB `PROPERTIES.md` — the config scaffolding exists but enumeration found 0 invariant/fuzz functions. For a share-accounting + CL-math vault this is the highest-value gap (targets: `I-11`, `E-1`/`E-2`, `X-2`, fee-isolation `E-3`).
+- **4 failing tests** should be triaged before audit — fork tests assume an uninitialized vault; the mismatch may hide a real setup drift.
+- No formal verification of the token1↔token0 / liquidity math.
 
 ---
 
 ## 6. Developer & Git History
 
-> Repo shape: normal_dev — 19 of 39 commits touch source over 55 days (2026-05-05 → 2026-06-29); single developer.
+> Repo shape: normal_dev — 21 source-touching commits of 85 total over 65 days (2026-05-05 → 2026-07-09). Single-developer dominated.
 
 ### Contributors
 
 | Author | Commits | Source Lines (+/-) | % of Source Changes |
 |--------|--------:|--------------------|--------------------:|
-| MananSinghal123 | 39 | +6498 / -3331 | 100% |
+| MananSinghal123 | 80 | +6586 / -3365 | 94.7% |
+| newtmex | 2 | +366 / -12 | 5.3% |
+| Manan Singhal | 3 | (same author, alt identity) | — |
 
 ### Review & Process Signals
 
 | Signal | Value | Assessment |
 |--------|-------|------------|
-| Unique contributors | 1 | Single-dev |
-| Merge commits | 0 of 39 (0%) | No merge commits — no peer-review signal |
-| Repo age | 2026-05-05 → 2026-06-29 | ~55 days |
-| Recent source activity (30d) | Multiple (last: 2026-06-29) | Active; mostly UI/frontend chores late |
-| Test co-change rate | 78.9% | % of source commits also touching tests (co-modification, not coverage) |
+| Unique contributors | 2–3 (mostly 1) | Single-dev |
+| Merge commits | 3 of 85 (3.5%) | Minimal peer-review signal |
+| Repo age | 2026-05-05 → 2026-07-09 | ~2 months |
+| Recent source activity (30d) | 7 commits | Active, incl. a late security-fix commit |
+| Test co-change rate | 76.2% | Most source commits also touch tests (co-modification, not coverage) |
 
 ### File Hotspots
 
 | File | Modifications | Note |
 |------|-------------:|------|
-| RebalancerVaultUpgradeable.sol | 7 | Core vault — highest-priority review |
-| RebalancerVault.sol (removed) | 7 | Predecessor monolith, replaced by upgradeable version |
-| CLDexAdapter.sol | 5 | Delegatecall seam churn |
-| VaultMath.sol | 4 | Core math |
-| OracleLib.sol | 3 | TWAP logic |
+| RebalancerVaultUpgradeable.sol | 9 | Central contract — highest churn, prioritize |
+| VaultMath.sol | 6 | Math extracted/reworked repeatedly |
+| OracleLib.sol | 5 | TWAP logic churned |
+| CLDexAdapter.sol | 5 | Delegatecall seam |
+| VaultLens.sol | 4 | View split-out |
 
 ### Security-Relevant Commits
 
 | SHA | Date | Subject | Score | Key Signal |
 |-----|------|---------|------:|------------|
-| f38c45374 | 2026-05-29 | fix: frontend build errors | 19 | adds runtime guards, tightens access control, touches transfer/accounting |
-| c7b5afeb6 | 2026-06-03 | update: beacon proxy pattern | 14 | removes guards (+3/-51), loosens access control, spans 5 security domains |
-| 4934a4445 | 2026-06-01 | fix: _s() routing, double-slot0, fee isolation | large | 3145-line refactor, no test changes |
+| f38c45374 | 2026-05-29 | fix: frontend build errors | 19 | adds guards + tightens access control (misleading subject) |
+| b2ea0b25c | 2026-07-02 | fix: few smart contract vulnerability | 18 | +6 guards, +10 access control, spans 5 domains — **late, no test change** |
+| c7b5afeb6 | 2026-06-03 | update: beacon proxy pattern | 14 | large; removes guards, changes accounting across 5 domains |
+| 344f17548 | 2026-05-30 | fix: seperated view contract | 14 | removes guards; fund_flows + oracle |
+| 4934a4445 | 2026-06-01 | fix: _s() routing, double-slot0, fee isolation | 13 | very large (>2000 lines); accounting + access control |
 
 ### Dangerous Area Evolution
 
 | Security Area | Commits | Key Files |
 |--------------|--------:|-----------|
-| oracle_price | 15 | RebalancerVaultUpgradeable, OracleLib, VaultMath |
-| fund_flows | 10 | RebalancerVaultUpgradeable, CLDexAdapter, VaultFactory |
-| access_control | 7 | RebalancerVaultUpgradeable, VaultFactory |
+| oracle_price | 17 | RebalancerVaultUpgradeable, VaultMath, OracleLib, VaultLens |
+| state_machines | 13 | RebalancerVaultUpgradeable, VaultStorageLib, OracleLib |
+| fund_flows | 12 | RebalancerVaultUpgradeable, CLDexAdapter, VaultLens |
+| access_control | 9 | RebalancerVaultUpgradeable, VaultFactory |
+| signatures | 9 | RebalancerVaultUpgradeable |
 
 ### Forked Dependencies
 
 | Library | Path | Upstream | Status | Notes |
 |---------|------|----------|--------|-------|
-| openzeppelin-contracts | lib/openzeppelin-contracts | OpenZeppelin | Submodule | Standard, not internalized |
-| openzeppelin-contracts-upgradeable | lib/openzeppelin-contracts-upgradeable | OpenZeppelin | Submodule | Standard |
-| v3-core / v3-periphery | lib/v3-core | Uniswap V3 | Submodule (`git status`: dirty) | `lib/v3-core` shows local modifications — worth confirming no divergence from upstream TickMath/LiquidityAmounts |
-
-### Technical Debt Markers
-
-None detected (0 TODO/FIXME/HACK in source).
+| UniswapV3Math shim | src/libraries/UniswapV3Math.sol | Uniswap V3 | Internalized | 0.8-port of FullMath/TickMath/LiquidityAmounts; upstream security fixes will NOT auto-propagate — verify against canonical source |
+| v3-core, v3-periphery | lib/ | Uniswap V3 | Submodule | Standard submodules (0.7.6) |
+| openzeppelin(-upgradeable) | lib/ | OpenZeppelin | Submodule | Standard |
 
 ### Security Observations
 
-- **Single-developer, zero merge commits** — 100% of source by MananSinghal123; no peer-review signal in history.
-- **`beacon proxy pattern` commit removed 51 guard lines and loosened access control across 5 domains** — c7b5afeb6 warrants a manual before/after diff.
-- **3145-line refactor (4934a4445) shipped with no test changes** — largest single diff, touches oracle+fund-flow paths.
-- **Fix-without-test rate 30%** — some fix-scored commits didn't co-modify tests (measures co-modification, not coverage).
-- **`lib/v3-core` is dirty in the working tree** — local edits to a vendored math library are hidden attack surface if TickMath/LiquidityAmounts were altered.
-- **oracle_price is the #1 churned area (15 commits)** — aligns with TWAP being the sole valuation source.
+- **Single-developer concentration** — MananSinghal123 authored 94.7% of source; 3.5% merge-commit rate → little peer-review signal.
+- **Late security fix without tests** — `b2ea0b25c` (2026-07-02) spans 5 security domains, `test_changed: false`; fix-without-test rate is 40%.
+- **Highest churn = highest-value contract** — `RebalancerVaultUpgradeable.sol` (9 mods) concentrates deposit/withdraw/fee/rebalance logic.
+- **Internalized Uniswap math** — the 0.8 shim is hand-ported; divergence from upstream is unmonitored attack surface.
+- **Oracle code churned 17×** — the TWAP path (the whole price defense) is the most-modified area; correlates with the `X-2` cardinality gap.
+- **Fuzz/invariant scaffolding without harnesses** — echidna/medusa configs + `PROPERTIES.md` exist but no runnable invariant functions.
 
 ### Cross-Reference Synthesis
 
-- **RebalancerVaultUpgradeable is #1 in churn AND concentrates every top attack surface** → highest-leverage review: `_totalVaultValueInToken0`, `redeem` fee separation, `_rebalanceRemoveFeeCollectBurn`, adapter/strategy setters.
-- **oracle_price churn (15) + TWAP-only valuation (X-1)** → the price path is both the most-modified and the most-trusted; deserves focused review of `OracleLib` + `VaultMath` conversions.
-- **`beacon proxy` guard removal (c7b5afeb6) + 0 merge commits** → the migration that loosened access control had no second reviewer.
+- **Oracle churn (17 commits) ↔ X-2 / E-1** — the TWAP conversion + cardinality assumption is both the most-edited code and the top On-chain=No invariant → prioritize `OracleLib` + `VaultMath.token1ToToken0` review.
+- **Beacon-proxy commit (`c7b5afeb6`, score 14, "removes guards") ↔ upgrade blast-radius surface** → diff this commit against the current beacon `upgradeTo` exposure.
+- **`b2ea0b25c` late fix ↔ 4 failing tests** — a security-domain-spanning fix with no test change, plus unresolved failing fork/beacon tests → confirm the fix is actually covered before audit.
 
 ---
 
 ## X-Ray Verdict
 
-**FRAGILE** — Unit tests exist broadly but 17 fail (incl. the only fork test), there is no fuzz/invariant/formal coverage despite math-heavy accounting, and single-key owner controls (delegatecall retargeting, beacon upgrade) have no timelock.
+**FRAGILE** — Roles and boundaries are clear and a README security table exists, but the codebase ships no runnable invariant/fuzz tests for share-accounting/CL math, has 4 failing tests, and concentrates unbounded control (instant `setDexAdapter` delegatecall repoint, instant beacon `upgradeTo`) with a fee-only timelock.
 
 **Structural facts:**
-1. 2342 nSLOC across 6 subsystems; one 1101-nSLOC core vault holds all fund logic.
-2. Upgradeable via a shared beacon — one implementation backs every `BeaconProxy` vault.
-3. 25 test files / 146 test functions exist; 17 currently fail; 0 fuzz, 0 invariant, 0 formal-verification tests.
-4. 100% single-developer authorship, 0 merge commits over 55 days.
-5. Fee changes are 2-day timelocked; `setDexAdapter`/`setStrategy`/beacon `upgradeTo` are instant single-key actions.
+1. ~1954 authored nSLOC across 8 in-scope contracts (+415 nSLOC vendored Uniswap math shim), single live CL position per vault.
+2. Beacon-proxy upgradeable; `VaultFactory` (UpgradeableBeacon) owner can upgrade all vaults instantly.
+3. 40 test files / 187 functions (183 pass, 4 fail); 0 stateful-fuzz/invariant/formal-verification functions despite config scaffolding.
+4. Single developer wrote 94.7% of source; 3.5% merge-commit rate; oracle_price area changed in 17 commits.
+5. 6 of 22 invariant/economic blocks are On-chain=No (I-8, I-11, X-2, X-3, E-1, E-2).

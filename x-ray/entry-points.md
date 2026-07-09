@@ -1,182 +1,198 @@
 # Entry Point Map
 
-> Mezo Rebalancer Vault | 27 entry points | 6 permissionless | 4 role-gated | 15 admin-only
+> Range (Rebalancer Vault) | 22 entry points | 6 permissionless | 6 role-gated | 10 admin-only
 
 ---
 
 ## Protocol Flow Paths
 
-### Setup (Owner / Factory)
+### Setup (Factory Owner)
 
-`Factory.deployVault()` → `Vault.initialize()` → `Vault.initializePosition()`  ◄── needs idle token0/token1
+`VaultFactory.deployVault()` → `RebalancerVault.initialize()` (via BeaconProxy) → `initializePosition()`  ◄── owner-only, once
 
-`Factory.deploySeedAndInitialize()` bundles: `deployVault` → `deposit(seed)` → `initializePosition` → `transferOwnership(realOwner)` in one owner call.
+`VaultFactory.deploySeedAndInitialize()` → deploy + `deposit(seed)` + `initializePosition()` + `transferOwnership()`  ◄── atomic bootstrap
 
 ### User Flow
 
-`[setup above]` → `Vault.deposit()` / `Vault.mint()` / `Vault.depositToken1()`  ◄── spot must be near TWAP (G-21)
-                          └─→ `Vault.withdraw()` / `Vault.redeem()`  ◄── not same block as deposit (G-8/G-9), spot near TWAP
+`[position initialized above]` → `deposit()` / `depositToken1()` / `mint()`  ◄── requires spot within `maxTwapDeviationTicks` of TWAP
+                                        ├─→ `withdraw()`  ◄── block.number > lastDepositBlock[owner]
+                                        └─→ `redeem()`    ◄── same-block guard; pays both tokens
 
 ### Maintenance (Operator / Keeper)
 
-`[deposit above]` → [spot near TWAP] → `Vault.rebalance()`  ◄── position must exist (G-4)
-`[position exists]` → `Vault.collectFees()`
+`[position initialized]` → [price drifts out of range] → `VaultLens.computeRebalanceParams()` (off-chain) → `rebalance(swapZeroForOne, swapAmount)`
 
-`VaultLens.computeRebalanceParams()` (view) supplies the `swapZeroForOne` / `swapAmount` args the operator passes to `rebalance`.
+`[idle tokens accrue]` → `VaultLens.computeDeployIdleParams()` (off-chain) → `deployIdle(swapZeroForOne, swapAmount)`
+
+`[fees accrue]` → `collectFees(amount0Min, amount1Min)`
 
 ### Emergency (Guardian)
 
-`Factory.pauseAll()` → per-vault `Vault.pauseByGuardian()`  (Factory is each vault's guardian)
+`VaultFactory.pauseAll()` → for each vault `RebalancerVault.pauseByGuardian()`  ◄── guardian == factory
 
-### Governance (Owner)
+### Fee Change (Owner)
 
-`proposePerformanceFee()` → [2-day timelock, I-8] → `applyPerformanceFee()`
+`proposePerformanceFee()` → [2 days pass] → `applyPerformanceFee()`
 
 ---
 
 ## Permissionless
 
-### `RebalancerVaultUpgradeable.deposit()`
+Callable by any address (subject to `whenNotPaused` + TWAP-proximity checks). Sorted tokens-in first.
+
+### `RebalancerVault.deposit(assets, receiver)`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | public, nonReentrant, whenNotPaused |
-| Caller | Any depositor |
+| Caller | User |
 | Parameters | assets (user-controlled), receiver (user-controlled) |
-| Call chain | `→ _requireSpotNearTwap() → OracleLib.requireSpotNearTwap() → IERC20.safeTransferFrom() → _mint()` |
-| State modified | `lastDepositBlock`, `_balances`, `_totalSupply` |
+| Call chain | `→ OracleLib.requireSpotNearTwap() → IERC20.safeTransferFrom() → _mint()` |
+| State modified | `lastDepositBlock[receiver]`, `_balances`, `_totalSupply` |
 | Value flow | token0: sender → Vault |
 | Reentrancy guard | yes |
 
-### `RebalancerVaultUpgradeable.mint()`
+### `RebalancerVault.mint(shares, receiver)`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | public, nonReentrant, whenNotPaused |
-| Caller | Any depositor |
+| Caller | User |
 | Parameters | shares (user-controlled), receiver (user-controlled) |
-| Call chain | `→ _requireSpotNearTwap() → previewMint() → IERC20.safeTransferFrom() → _mint()` |
-| State modified | `lastDepositBlock`, `_balances`, `_totalSupply` |
+| Call chain | `→ requireSpotNearTwap() → previewMint() → safeTransferFrom() → _mint()` |
+| State modified | `lastDepositBlock[receiver]`, `_balances`, `_totalSupply` |
 | Value flow | token0: sender → Vault |
 | Reentrancy guard | yes |
 
-### `RebalancerVaultUpgradeable.depositToken1()`
+### `RebalancerVault.depositToken1(token1Amount, receiver)`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | external, nonReentrant, whenNotPaused |
-| Caller | Any depositor |
+| Caller | User |
 | Parameters | token1Amount (user-controlled), receiver (user-controlled) |
-| Call chain | `→ _requireSpotNearTwap() → IERC20.safeTransferFrom() → VaultMath.token1ToToken0() → OracleLib.getTwapSqrtPrice() → _mint()` |
-| State modified | `lastDepositBlock`, `_balances`, `_totalSupply` |
+| Call chain | `→ requireSpotNearTwap() → safeTransferFrom(token1) → VaultMath.token1ToToken0(TWAP) → _mint()` |
+| State modified | `lastDepositBlock[receiver]`, `_balances`, `_totalSupply` |
 | Value flow | token1: sender → Vault |
 | Reentrancy guard | yes |
 
-### `RebalancerVaultUpgradeable.withdraw()`
+### `RebalancerVault.withdraw(assets, receiver, owner_)`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | public, nonReentrant, whenNotPaused |
-| Caller | Share owner / approved spender |
+| Caller | User (share owner or approved spender) |
 | Parameters | assets (user-controlled), receiver (user-controlled), owner_ (user-controlled) |
-| Call chain | `→ _requireSpotNearTwap() → previewWithdraw() → _removeProportionalLiquidity() → CLDexAdapter.decreaseLiquidity()/collect() [delegatecall] → _executeSwap() → _burn() → IERC20.safeTransfer()` |
-| State modified | `_balances`, `_totalSupply`, `tokenId` position liquidity |
+| Call chain | `→ requireSpotNearTwap() → _removeProportionalLiquidity() → _decreaseLiquidity()/_collect() (delegatecall adapter) → _deductPerformanceFee() → _burn() → _executeSwap() (if shortfall) → safeTransfer(token0)` |
+| State modified | position liquidity, `totalFees0/1Earned`, `_balances`, `_totalSupply` |
 | Value flow | token0: Vault → receiver |
 | Reentrancy guard | yes |
 
-### `RebalancerVaultUpgradeable.redeem()`
+### `RebalancerVault.redeem(shares, receiver, owner_)`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | public, nonReentrant, whenNotPaused |
-| Caller | Share owner / approved spender |
+| Caller | User (share owner or approved spender) |
 | Parameters | shares (user-controlled), receiver (user-controlled), owner_ (user-controlled) |
-| Call chain | `→ _requireSpotNearTwap() → _removeProportionalLiquidity() → CLDexAdapter.decreaseLiquidity()/collect() [delegatecall] → _burn() → IERC20.safeTransfer() (token0 + token1)` |
-| State modified | `_balances`, `_totalSupply`, `tokenId` position liquidity, `totalFees*Earned` |
+| Call chain | `→ requireSpotNearTwap() → _removeProportionalLiquidity() → _deductPerformanceFee() → _burn() → safeTransfer(token0) + safeTransfer(token1)` |
+| State modified | position liquidity, `totalFees0/1Earned`, `_balances`, `_totalSupply` |
 | Value flow | token0 + token1: Vault → receiver |
 | Reentrancy guard | yes |
 
-### `CLDexAdapter` externals (`mint` / `decreaseLiquidity` / `collect` / `burn` / `exactInputSingle`)
+### `RebalancerVault.receive()`
 
 | Aspect | Detail |
 |--------|--------|
-| Visibility | external (no access control) |
-| Caller | Intended: the vault via `delegatecall`. The deployed adapter is also directly callable. |
-| Parameters | struct args (caller-controlled) |
-| Call chain | `→ INonfungiblePositionManager.* / ICLSwapRouter.exactInputSingle()` |
-| State modified | None in adapter (stateless); operates on the caller's own token/approval context |
-| Value flow | Only moves the *caller's* tokens; direct calls on the standalone adapter act on its empty context |
+| Visibility | external payable |
+| Caller | Anyone |
+| Parameters | none |
+| Call chain | (empty body) |
+| State modified | native balance only (no accounting) |
+| Value flow | ETH: sender → Vault (no withdrawal path) |
 | Reentrancy guard | no |
 
 ---
 
 ## Role-Gated
 
-### `Operator`
+### `Operator` (keeper)
 
-#### `RebalancerVaultUpgradeable.rebalance()`
+#### `RebalancerVault.rebalance(swapZeroForOne, swapAmount)`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | external, nonReentrant, whenNotPaused, positionExists |
-| Caller | Operator (keeper) |
+| Caller | Keeper bot |
 | Parameters | swapZeroForOne (keeper-provided), swapAmount (keeper-provided) |
-| Call chain | `→ _requireSpotNearTwap() → _rebalanceRemoveFeeCollectBurn() → CLDexAdapter.decreaseLiquidity/collect/burn [delegatecall] → _executeSwap() → _rebalanceMintNew() → IStrategy.computeRange() → CLDexAdapter.mint() [delegatecall]` |
-| State modified | `tokenId`, `rebalanceCount`, `totalFees*Earned` |
-| Value flow | Internal (swap + re-mint); performance fee → feeRecipient |
+| Call chain | `→ requireSpotNearTwap() → _rebalanceRemoveFeeCollectBurn() → _executeSwap() → _rebalanceMintNew() → Strategy.computeRange() → _mintPosition() (delegatecall)` |
+| State modified | `tokenId`, `rebalanceCount`, `totalFees0/1Earned`, position |
+| Value flow | internal (removes + re-mints position; fee → feeRecipient) |
 | Reentrancy guard | yes |
 
-#### `RebalancerVaultUpgradeable.collectFees()`
+#### `RebalancerVault.deployIdle(swapZeroForOne, swapAmount)`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | external, nonReentrant, whenNotPaused, positionExists |
-| Caller | Operator (keeper) |
-| Parameters | amount0Min (keeper-provided), amount1Min (keeper-provided) |
-| Call chain | `→ CLDexAdapter.decreaseLiquidity(0)/collect [delegatecall] → _deductPerformanceFee() → IERC20.safeTransfer()` |
-| State modified | `totalFees0Earned`, `totalFees1Earned` |
-| Value flow | performance fee → feeRecipient; remainder stays idle |
+| Caller | Keeper bot |
+| Parameters | swapZeroForOne (keeper-provided), swapAmount (keeper-provided) |
+| Call chain | `→ requireSpotNearTwap() → _executeSwap() → _increaseLiquidity() (delegatecall)` |
+| State modified | position liquidity |
+| Value flow | internal (idle tokens → existing position) |
 | Reentrancy guard | yes |
 
-### `Guardian`
-
-#### `RebalancerVaultUpgradeable.pauseByGuardian()`
+#### `RebalancerVault.collectFees(amount0Min, amount1Min)`
 
 | Aspect | Detail |
 |--------|--------|
-| Visibility | external (internal `msg.sender == guardian` check) |
-| Caller | Guardian (the VaultFactory) |
-| Parameters | none |
-| Call chain | `→ sets paused = true` |
-| State modified | `paused` |
-| Value flow | none |
-| Reentrancy guard | no |
+| Visibility | external, nonReentrant, whenNotPaused, positionExists |
+| Caller | Keeper bot |
+| Parameters | amount0Min (keeper-provided), amount1Min (keeper-provided) |
+| Call chain | `→ _decreaseLiquidity(0) → _collect() (delegatecall) → _deductPerformanceFee()` |
+| State modified | `totalFees0/1Earned` |
+| Value flow | fee → feeRecipient; net stays idle in Vault |
+| Reentrancy guard | yes |
 
 ### `pendingOwner`
 
-#### `RebalancerVaultUpgradeable.acceptOwnership()`
+#### `RebalancerVault.acceptOwnership()`
 
 | Aspect | Detail |
 |--------|--------|
-| Visibility | external (internal `msg.sender == pendingOwner` check) |
-| Caller | Pending owner |
+| Visibility | external |
+| Caller | pendingOwner |
 | Parameters | none |
 | Call chain | `→ owner = pendingOwner; pendingOwner = 0` |
 | State modified | `owner`, `pendingOwner` |
 | Value flow | none |
 | Reentrancy guard | no |
 
-### `Factory Guardian`
+### `guardian`
+
+#### `RebalancerVault.pauseByGuardian()`
+
+| Aspect | Detail |
+|--------|--------|
+| Visibility | external |
+| Caller | guardian (the VaultFactory) |
+| Parameters | none |
+| Call chain | `→ paused = true` |
+| State modified | `paused` |
+| Value flow | none |
+| Reentrancy guard | no |
+
+### `VaultFactory` guardian
 
 #### `VaultFactory.pauseAll()`
 
 | Aspect | Detail |
 |--------|--------|
 | Visibility | external, onlyGuardian |
-| Caller | Factory guardian |
+| Caller | Guardian |
 | Parameters | none |
-| Call chain | `→ loop IRebalancerVault.pauseByGuardian()` over allVaults |
-| State modified | `paused` on every vault |
+| Call chain | `→ loop allVaults → RebalancerVault.pauseByGuardian()` |
+| State modified | `paused` on every deployed vault |
 | Value flow | none |
 | Reentrancy guard | no |
 
@@ -184,28 +200,30 @@
 
 ## Admin-Only
 
+`RebalancerVault` owner and `VaultFactory` owner (beacon owner). All operational actions are instant (no timelock except the fee change).
+
 | Contract | Function | Parameters | State Modified |
 |----------|----------|------------|----------------|
-| Vault | `initializePosition()` | ticks, amounts, mins | `tokenId` (mints NFT) |
-| Vault | `transferOwnership()` | newOwner | `pendingOwner` |
-| Vault | `setOperator()` | newOperator | `operator` |
-| Vault | `setPaused()` | _paused | `paused` |
-| Vault | `setGuardian()` | newGuardian | `guardian` |
-| Vault | `setStrategy()` | newStrategy | `strategy` |
-| Vault | `setDexAdapter()` | newAdapter | `dexAdapter` |
-| Vault | `proposePerformanceFee()` | bps, recipient | `pendingFeeBps`, `pendingFeeRecipient`, `feeChangeActiveAt` |
-| Vault | `applyPerformanceFee()` | — | `performanceFeeBps`, `feeRecipient` |
-| Vault | `sweepToken()` | token, to | transfers non-core token out |
-| Vault | `setTwapSeconds()` | seconds_ | `twapSeconds` |
-| Vault | `setMaxTwapDeviationTicks()` | ticks | `maxTwapDeviationTicks` |
-| Vault | `setSlippageBps()` | bps | `slippageBps` |
-| Factory | `deployVault()` | pool, strategy, roles, name/symbol | `vaultFor`, `allVaults` |
-| Factory | `deploySeedAndInitialize()` | + seed, ticks, mins | deploys, seeds, inits, transfers ownership |
-| Factory | `setGuardian()` | newGuardian | `guardian` |
-| Factory (Beacon) | `upgradeTo()` | newImplementation | beacon implementation (all vaults) |
+| RebalancerVault | `initializePosition(tickLower, tickUpper, amount0/1Desired, amount0/1Min)` | ticks + amounts (owner) | `tokenId` (one-shot) |
+| RebalancerVault | `transferOwnership(newOwner_)` | newOwner_ (owner) | `pendingOwner` |
+| RebalancerVault | `setOperator(newOperator)` | newOperator (owner) | `operator` |
+| RebalancerVault | `setPaused(bool)` | _paused (owner) | `paused` |
+| RebalancerVault | `setGuardian(newGuardian)` | newGuardian (owner) | `guardian` |
+| RebalancerVault | `setStrategy(newStrategy)` | newStrategy (owner) | `strategy` |
+| RebalancerVault | `setDexAdapter(newAdapter)` | newAdapter (owner) | `dexAdapter` (delegatecall target) |
+| RebalancerVault | `proposePerformanceFee(bps, recipient)` | bps ≤ 1000, recipient (owner) | `pendingFeeBps`, `pendingFeeRecipient`, `feeChangeActiveAt` |
+| RebalancerVault | `applyPerformanceFee()` | none (owner) | `performanceFeeBps`, `feeRecipient` (after 2-day lock) |
+| RebalancerVault | `sweepToken(token, to)` | token≠token0/1, to (owner) | transfers stray ERC20 out |
+| RebalancerVault | `setTwapSeconds(seconds_)` | ≥60 (owner) | `twapSeconds` |
+| RebalancerVault | `setMaxTwapDeviationTicks(ticks)` | (0,1000] (owner) | `maxTwapDeviationTicks` |
+| RebalancerVault | `setSlippageBps(bps)` | ≤500 (owner) | `slippageBps` |
+| VaultFactory | `deployVault(pool, strategy, owner, operator, feeRecipient, name, symbol)` | (factory owner) | `vaultFor`, `allVaults` |
+| VaultFactory | `deploySeedAndInitialize(...)` | + seedAssets, ticks, mins (factory owner) | deploys, seeds, initializes, transfers |
+| VaultFactory | `setGuardian(newGuardian)` | newGuardian (factory owner) | `guardian` |
+| VaultFactory | `upgradeTo(newImpl)` *(UpgradeableBeacon)* | newImpl (factory owner) | beacon implementation for ALL vaults |
 
 ---
 
 ## Initialization
 
-- `RebalancerVaultUpgradeable.initialize(InitParams)` — `initializer` modifier; called once via `BeaconProxy` constructor from `VaultFactory._deploy`. Sets all roles, pool/token wiring, and default params (fee 1000bps, twap 300s, deviation 200 ticks, slippage 50bps). The implementation contract's constructor calls `_disableInitializers()`.
+- `RebalancerVault.initialize(InitParams)` — `initializer`-gated, called once by the BeaconProxy constructor with factory-encoded params. Sets owner/operator/guardian/pool/tokens/adapters and default params (fee 1000 bps, twap 300s, deviation 200 ticks, slippage 50 bps). The implementation constructor calls `_disableInitializers()`.

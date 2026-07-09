@@ -1,6 +1,6 @@
 # Invariant Map
 
-> Mezo Rebalancer Vault | 22 guards | 14 inferred | 5 not enforced on-chain
+> Range (Rebalancer Vault) | 22 guards | 15 inferred | 5 not enforced on-chain
 
 ---
 
@@ -9,84 +9,88 @@
 Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.md attack surfaces.
 
 #### G-1
-`if (msg.sender != _s().owner) revert NotOwner()` · `RebalancerVaultUpgradeable.sol:141` · Gates all admin config setters to the single owner key.
+`if (msg.sender != _s().owner) revert NotOwner()` · `RebalancerVaultUpgradeable.sol:143` · Confines all vault configuration (operator/guardian/strategy/adapter/fee/pause) to the single owner key.
 
 #### G-2
-`if (msg.sender != _s().operator) revert NotOperator()` · `RebalancerVaultUpgradeable.sol:146` · Restricts `rebalance` / `collectFees` to the keeper.
+`if (msg.sender != _s().operator) revert NotOperator()` · `RebalancerVaultUpgradeable.sol:148` · Restricts value-moving rebalance/collect/deployIdle flows to the keeper wallet.
 
 #### G-3
-`if (_s().paused) revert Paused()` · `RebalancerVaultUpgradeable.sol:151` · Freezes deposits/withdrawals/rebalance when paused.
+`if (_s().paused) revert Paused()` · `RebalancerVaultUpgradeable.sol:153` · Emergency kill-switch gating deposit/mint/withdraw/redeem/rebalance/deployIdle.
 
 #### G-4
-`if (_s().tokenId == 0) revert NotInitialized()` · `RebalancerVaultUpgradeable.sol:156` · Blocks fee-collect/rebalance before a position exists.
+`if (_s().tokenId == 0) revert NotInitialized()` · `RebalancerVaultUpgradeable.sol:158` · Blocks fee collection and rebalance before a position exists.
 
 #### G-5
-`if (assets > maxDeposit(receiver)) revert ExceedsMaxDeposit()` · `RebalancerVaultUpgradeable.sol:384` · Blocks deposits when spot deviates from TWAP or vault paused.
+`if (assets > maxDeposit(receiver)) revert ExceedsMaxDeposit()` · `RebalancerVaultUpgradeable.sol:386` · `maxDeposit` returns 0 when paused or spot deviates from TWAP → couples deposits to the price-proximity oracle check.
 
 #### G-6
-`if (assets <= DEAD_SHARES) revert BelowMinDeposit()` · `RebalancerVaultUpgradeable.sol:396` · First deposit must exceed the 1000 dead-share floor (inflation-attack guard).
+`if (assets <= DEAD_SHARES) revert BelowMinDeposit()` · `RebalancerVaultUpgradeable.sol:398` · Ensures the first deposit exceeds the 1000 dead-share offset so `shares` cannot underflow to zero.
 
 #### G-7
-`if (shares == 0) revert ZeroAmount()` · `RebalancerVaultUpgradeable.sol:409` · Rejects deposits that round to zero shares.
+`if (block.number <= s.lastDepositBlock[owner_]) revert SameBlock()` · `RebalancerVaultUpgradeable.sol:452` · Same-block deposit+exit sandwich guard on withdraw/redeem (also line 530).
 
 #### G-8
-`if (block.number <= s.lastDepositBlock[owner_]) revert SameBlock()` · `RebalancerVaultUpgradeable.sol:450` · Prevents same-block deposit→withdraw (flash-loan share arbitrage).
+`if (finalIdle0 < assets) revert InsufficientToken0ForWithdraw(finalIdle0, assets)` · `RebalancerVaultUpgradeable.sol:516` · Guarantees the promised token0 amount is on hand before transfer.
 
 #### G-9
-`if (block.number <= s.lastDepositBlock[owner_]) revert SameBlock()` · `RebalancerVaultUpgradeable.sol:501` · Same-block guard on redeem path.
+`if (s.tokenId != 0) revert AlreadyInitialized()` · `RebalancerVaultUpgradeable.sol:683` · One-shot latch: position can be initialized only once.
 
 #### G-10
-`if (finalIdle0 < assets) revert InsufficientToken0ForWithdraw(...)` · `RebalancerVaultUpgradeable.sol:487` · Ensures the exact requested token0 is available after unwind+swap.
+`if (tickLower >= tickUpper) revert InvalidRange()` · `RebalancerVaultUpgradeable.sol:684` · Rejects degenerate/inverted initial ranges.
 
 #### G-11
-`if (s.tokenId != 0) revert AlreadyInitialized()` · `RebalancerVaultUpgradeable.sol:643` · One-shot latch on first position mint.
+`if (newLiquidity == 0) revert NoLiquidityMinted()` · `RebalancerVaultUpgradeable.sol:703` · Rejects mints/increases that add no liquidity (also 906; `addedLiq==0` at 976).
 
 #### G-12
-`if (tickLower >= tickUpper) revert InvalidRange()` · `RebalancerVaultUpgradeable.sol:644` · Rejects degenerate initial ranges.
+`if (bps > 1000) revert FeeTooHigh()` · `RebalancerVaultUpgradeable.sol:1038` · Hard-caps the performance fee at 10% at proposal time.
 
 #### G-13
-`if (newLiquidity == 0) revert NoLiquidityMinted()` · `RebalancerVaultUpgradeable.sol:663,866` · Ensures mint produced real liquidity.
+`if (block.timestamp < s.feeChangeActiveAt) revert TimelockActive()` · `RebalancerVaultUpgradeable.sol:1049` · Enforces the 2-day timelock before a proposed fee/recipient takes effect.
 
 #### G-14
-`if (bps > 1000) revert FeeTooHigh()` · `RebalancerVaultUpgradeable.sol:931` · Caps performance fee proposal at 10%.
+`if (seconds_ < 60) revert TwapTooShort()` · `RebalancerVaultUpgradeable.sol:1066` · Floors the TWAP window so the oracle cannot be shrunk toward spot.
 
 #### G-15
-`if (block.timestamp < s.feeChangeActiveAt) revert TimelockActive()` · `RebalancerVaultUpgradeable.sol:942` · Enforces 2-day timelock before a fee change activates.
+`if (ticks <= 0 || ticks > 1000) revert DeviationOutOfRange()` · `RebalancerVaultUpgradeable.sol:1071` · Bounds the max spot/TWAP deviation tolerance.
 
 #### G-16
-`if (token == s.token0 || token == s.token1) revert InvalidToken()` · `RebalancerVaultUpgradeable.sol:950` · Prevents owner sweeping the vault's core assets.
+`if (bps > 500) revert SlippageTooHigh()` · `RebalancerVaultUpgradeable.sol:1076` · Caps configurable swap/mint slippage at 5%.
 
 #### G-17
-`if (seconds_ < 60) revert TwapTooShort()` · `RebalancerVaultUpgradeable.sol:959` · Floors TWAP window at 60s to limit manipulability.
+`if (token == s.token0 || token == s.token1) revert InvalidToken()` · `RebalancerVaultUpgradeable.sol:1057` · Prevents the owner sweep from draining the two vault assets.
 
 #### G-18
-`if (ticks <= 0 || ticks > 1000) revert DeviationOutOfRange()` · `RebalancerVaultUpgradeable.sol:964` · Bounds spot-vs-TWAP deviation tolerance.
+`if (msg.sender != s.pendingOwner) revert NotPendingOwner()` · `RebalancerVaultUpgradeable.sol:992` · Second leg of two-step ownership handover.
 
 #### G-19
-`if (bps > 500) revert SlippageTooHigh()` · `RebalancerVaultUpgradeable.sol:969` · Caps swap/mint slippage tolerance at 5%.
+`if (msg.sender != _s().guardian) revert NotGuardian()` · `RebalancerVaultUpgradeable.sol:1011` · Restricts the emergency pause path to the guardian (the factory).
 
 #### G-20
-`if (lo >= hi) revert InvalidRange(); if (lo < MIN_TICK || hi > MAX_TICK) revert InvalidStrategyTicks()` · `RebalancerVaultUpgradeable.sol:1288-1290` · Re-validates untrusted strategy output before minting.
+`if (deviation > int256(uint256(int256(maxTwapDeviationTicks)))) revert PriceDeviatedFromTwap()` · `OracleLib.sol:47` · The core anti-manipulation guard: spot must sit within N ticks of the TWAP on every user/keeper action.
 
 #### G-21
-`if (deviation > maxTwapDeviationTicks) revert PriceDeviatedFromTwap()` · `OracleLib.sol:47` · Core spot-near-TWAP gate reused across all value-moving flows.
+`if (sqrtPriceX96 == 0) revert InvalidPoolPrice()` · `VaultMath.sol:25` · Rejects a zero TWAP sqrt price before token1→token0 valuation.
 
 #### G-22
-`if (msg.sender != s.pendingOwner) revert NotPendingOwner()` · `RebalancerVaultUpgradeable.sol:885` · Two-step ownership acceptance guard.
+`if (vaultFor[pool][strategy] != address(0)) revert VaultExists()` · `VaultFactory.sol:173` · One vault per (pool, strategy) pair — deployment de-duplication.
 
 ---
 
 ## 2. Inferred Invariants (Single-Contract)
 
+Categories: `Conservation` · `Bound` · `Ratio` · `StateMachine` · `Temporal`.
+
+---
+
 #### I-1
 
-`Conservation` · On-chain: **Yes**
+`Bound` · On-chain: **Yes**
 
-> Collected fees split exactly: `net0 + fee0 == tokensOwed0` and `Δ(totalFees0Earned) == fee0` (likewise token1).
+> `performanceFeeBps ∈ [0, 1000]` (≤ 10%) at all times.
 
-**Derivation** — Δ-pair: `RebalancerVaultUpgradeable.sol:718` (`net0 = tokensOwed0 - fee0`) ↔ `:721` (`s.totalFees0Earned += fee0`); fee computed in `_deductPerformanceFee:1150`.
+**Derivation** — guard-lift G-12 (`bps > 1000` at propose:1038) + all write sites: `initialize:188` sets `1000`; `applyPerformanceFee:1050` sets `pendingFeeBps`, itself only writable by `proposePerformanceFee` behind the guard. No unguarded writer.
 
-**If violated** — Fee accounting drifts from actual collected amounts.
+**If violated** — fees could exceed the advertised 10% cap on collected trading fees.
 
 ---
 
@@ -94,11 +98,11 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 `Bound` · On-chain: **Yes**
 
-> `performanceFeeBps ∈ [0, 1000]` (≤10%) at all times.
+> `slippageBps ∈ [0, 500]` (≤ 5%).
 
-**Derivation** — guard-lift: `require(bps <= 1000)` at `proposePerformanceFee:931`. Write sites: `initialize:186` (=1000), `applyPerformanceFee:943` (= pendingFeeBps, itself bounded by the propose guard). All writers respect the bound.
+**Derivation** — guard-lift G-16 (`bps > 500` at setSlippageBps:1075) + write sites `initialize:191` (=50) and `setSlippageBps:1077`. Both bounded.
 
-**If violated** — Excess fee extraction from yield.
+**If violated** — on-chain min-out floors would loosen, widening keeper swap/mint slippage tolerance.
 
 ---
 
@@ -106,11 +110,11 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 `Bound` · On-chain: **Yes**
 
-> `slippageBps ∈ [0, 500]` (≤5%).
+> `twapSeconds ≥ 60`.
 
-**Derivation** — guard-lift: `require(bps <= 500)` at `setSlippageBps:969`. Write sites: `initialize:189` (=50), `setSlippageBps:970`. Both bounded.
+**Derivation** — guard-lift G-14 (`seconds_ < 60` at setTwapSeconds:1065) + write sites `initialize:189` (=300) and `setTwapSeconds:1067`.
 
-**If violated** — Swaps/mints accept unbounded slippage.
+**If violated** — a short TWAP window approaches spot and weakens manipulation resistance.
 
 ---
 
@@ -118,23 +122,23 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 `Bound` · On-chain: **Yes**
 
-> `twapSeconds >= 60`.
+> `maxTwapDeviationTicks ∈ [1, 1000]`.
 
-**Derivation** — guard-lift: `require(seconds_ >= 60)` at `setTwapSeconds:959`. Write sites: `initialize:187` (=300), `setTwapSeconds:960`. Both bounded.
+**Derivation** — guard-lift G-15 (`ticks <= 0 || ticks > 1000` at setMaxTwapDeviationTicks:1070) + write sites `initialize:190` (=200) and `setMaxTwapDeviationTicks:1072`.
 
-**If violated** — Short TWAP window becomes cheaply manipulable.
+**If violated** — deviation tolerance could be set to 0 (bricking deposits) or unbounded (defeating G-20).
 
 ---
 
 #### I-5
 
-`Bound` · On-chain: **Yes**
+`StateMachine` · On-chain: **Yes**
 
-> `maxTwapDeviationTicks ∈ (0, 1000]`.
+> `tokenId` is `0` until `initializePosition`, then always non-zero; thereafter it only cycles concrete→concrete via `rebalance`.
 
-**Derivation** — guard-lift: `require(ticks > 0 && ticks <= 1000)` at `setMaxTwapDeviationTicks:964`. Write sites: `initialize:188` (=200), `setMaxTwapDeviationTicks:965`.
+**Derivation** — edge: `tokenId == 0`@683 → `s.tokenId = newTokenId`@704 (guarded by G-9); reassigned at `_rebalanceMintNew:908`. No path resets it to 0.
 
-**If violated** — Deviation gate could be disabled (0) or made meaningless (huge).
+**If violated** — a second `initializePosition` could orphan the live NFT and its liquidity.
 
 ---
 
@@ -142,132 +146,141 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 `StateMachine` · On-chain: **Yes**
 
-> `tokenId` transitions `0 → nonzero` exactly once via `initializePosition`; thereafter only `rebalance` may replace it with a freshly minted id (never back to 0).
+> Ownership transfers two-step: `pendingOwner` set by `transferOwnership`, consumed by `acceptOwnership` which sets `owner = pendingOwner` and clears `pendingOwner`.
 
-**Derivation** — edge: `tokenId==0`@643 → `s.tokenId = newTokenId`@664. Reverse blocked by `AlreadyInitialized` guard (G-11).
+**Derivation** — edge: `pendingOwner = newOwner_`@986 → `require(sender==pendingOwner)`@992 → `owner = pendingOwner; pendingOwner = 0`@994-995.
 
-**If violated** — Re-initialization could orphan the live NFT position.
+**If violated** — ownership could pass to an address that never accepted, risking a lost admin seat.
 
 ---
 
 #### I-7
 
-`StateMachine` · On-chain: **Yes**
+`Temporal` · On-chain: **Yes**
 
-> Ownership is two-step: `pendingOwner` set by current owner, then latched to `owner` only by the pending address, resetting `pendingOwner` to 0.
+> A proposed fee change is only applyable at/after `feeChangeActiveAt = proposeTime + 2 days`.
 
-**Derivation** — edge: `transferOwnership:879` sets `pendingOwner`; `acceptOwnership:885-888` requires `msg.sender == pendingOwner`, sets `owner`, clears `pendingOwner`.
+**Derivation** — temporal: `s.feeChangeActiveAt = block.timestamp + 2 days`@1043 checked by `block.timestamp < s.feeChangeActiveAt`@1049 (G-13).
 
-**If violated** — Ownership could transfer to an address that never accepted (typo bricking).
+**If violated** — fee/recipient changes could take effect without the disclosed delay.
 
 ---
 
 #### I-8
 
-`Temporal` · On-chain: **Yes**
+`Temporal` · On-chain: **No**
 
-> A proposed fee change cannot apply before `feeChangeActiveAt = proposeTime + 2 days`.
+> A share holder cannot deposit and withdraw/redeem in the same block.
 
-**Derivation** — temporal: `s.feeChangeActiveAt = block.timestamp + 2 days` (`:936`) checked by `require(block.timestamp >= feeChangeActiveAt)` (`applyPerformanceFee:942`).
+**Derivation** — temporal: `s.lastDepositBlock[receiver] = block.number` on deposit:390 / mint:427 / depositToken1:638; checked as `block.number <= s.lastDepositBlock[owner_]` at withdraw:452 / redeem:530. **Gap**: the stamp is keyed by `receiver` at deposit but the check reads `owner_` at exit; shares moved by ERC20 transfer to a fresh address carry no stamp, and a depositor funding a different receiver leaves their own address unstamped.
 
-**If violated** — Fee changes bypass the user-exit window.
+**If violated** — the same-block sandwich guard can be sidestepped by routing shares through an unstamped address.
 
 ---
 
 #### I-9
 
-`Temporal` · On-chain: **Yes**
+`Conservation` · On-chain: **Yes**
 
-> A holder cannot withdraw/redeem in the same block they deposited: `withdraw/redeem` require `block.number > lastDepositBlock[owner]`.
+> Exactly `DEAD_SHARES` (1000) are minted to `address(0xdead)` once, when `totalSupply == 0`.
 
-**Derivation** — temporal: `s.lastDepositBlock[receiver] = block.number` (`:388,425,598`) checked at `:450,501`.
+**Derivation** — Δ-pair: `_mint(address(0xdead), DEAD_SHARES)` fires only inside the `supply == 0` branch at deposit:399, mint:438, depositToken1:657; no burn path removes them.
 
-**If violated** — Enables single-block deposit→price-move→withdraw share arbitrage.
+**If violated** — the first-depositor inflation offset would be absent.
 
 ---
 
 #### I-10
 
-`Conservation` · On-chain: **Yes**
+`Ratio` · On-chain: **Yes**
 
-> On the first deposit, `DEAD_SHARES` (1000) are minted to `0xdead` and permanently subtracted from the depositor's shares.
+> Deposit shares = `assets * totalSupply / totalValueBefore` (floor), snapshotting `totalValBefore` and `supply` *before* the incoming `safeTransferFrom`.
 
-**Derivation** — Δ-pair: `_mint(0xdead, DEAD_SHARES)`@397 with `shares = assets - DEAD_SHARES`@398 (mirrored in `mint:436`, `depositToken1:617`).
+**Derivation** — `shares = Math.mulDiv(assets, supply, totalValBefore, Floor)`@403-408; `totalValBefore = _totalVaultValueInToken0()`@392 read before transfer@395.
 
-**If violated** — First-depositor inflation attack becomes viable.
+**If violated** — mispricing on deposit would dilute or inflate existing holders.
 
 ---
 
 #### I-11
 
-`Ratio` · On-chain: **Yes**
+`Ratio` · On-chain: **No**
 
-> `convertToShares(assets) = assets · totalSupply / totalAssets` (floor); `convertToAssets(shares) = shares · totalAssets / totalSupply` (floor).
+> `totalAssets()` reflects only real vault-controlled value.
 
-**Derivation** — `convertToShares:303` / `convertToAssets:313`, both `Math.mulDiv` of two storage-derived quantities (`totalSupply()`, `totalAssets()`).
+**Derivation** — `_totalVaultValueInToken0` sums `IERC20(token0/1).balanceOf(address(this))` + position value@1119-1144. **Gap**: idle legs read from `balanceOf`, so a direct token transfer (donation) to the vault raises `totalAssets` without minting shares.
 
-**If violated** — Share pricing diverges from backing value.
+**If violated** — donation-based share-price manipulation against the fixed 1000 dead-share offset.
 
 ---
 
 #### I-12
 
-`Ratio` · On-chain: **No**
+`Conservation` · On-chain: **No** (negative observation)
 
-> `totalAssets()` = idle token0 + position principal + owed fees + (idle+position token1 valued at **TWAP**). Idle balances are read via `balanceOf(address(this))`, so a direct token transfer (donation) inflates it.
+> `totalFees0Earned` / `totalFees1Earned` are monotonic cumulative counters, not tied to any balance.
 
-**Derivation** — `_totalVaultValueInToken0:1010-1047` reads `IERC20(token0).balanceOf(this)` and `IERC20(token1).balanceOf(this)`; no internal accounting counterpart. No guard enforces `accounted == balanceOf`.
+**Derivation** — every write is `+= fee` (withdraw:488, redeem:565, collectFees:761, rebalance:859); no decrement or reconciliation to real transfers.
 
-**If violated** — Donation shifts share price; mitigated only by DEAD_SHARES (I-10), not eliminated.
+**If violated** — display-only metrics; auditors should not treat them as an accounting invariant.
 
 ---
 
 #### I-13
 
-`Bound` · On-chain: **No**
+`Conservation` · On-chain: **No** (negative observation)
 
-> Fee-owed subtraction assumes `tokensOwed >= principal`: `feesOwed0 = tokensOwed0 - uint128(principal0)`.
+> `receive()` accepts ETH but no accounting tracks it.
 
-**Derivation** — guard-lift (negative): `RebalancerVaultUpgradeable.sol:802-803` performs unchecked-in-intent uint128 subtraction with no `require(tokensOwed0 >= principal0)`. No write site establishes the ordering invariant; it relies on position-manager return semantics.
+**Derivation** — Δ-pair absent: `receive() external payable {}`@1082 has zero storage effect; only `sweepToken` (non-token0/1 ERC20) can move value out, and it cannot move native ETH.
 
-**If violated** — Underflow reverts rebalance, or (if semantics differ) misattributes principal as fee.
+**If violated** — native ETH sent to the vault is stranded (no withdrawal path); relevant only if the chain's gas token is ever routed here.
 
 ---
 
 #### I-14
 
-`Temporal` · On-chain: **Yes**
+`Ratio` · On-chain: **Yes**
 
-> Every liquidity mint/decrease/collect/swap carries `deadline = block.timestamp + 300`.
+> Performance fee = `earned * performanceFeeBps / 10_000` rounded **up** (Ceil).
 
-**Derivation** — temporal: `deadline: block.timestamp + 300` at `:659,690,787,862,1104,1134`.
+**Derivation** — `Math.mulDiv(earned0, s.performanceFeeBps, 10_000, Ceil)`@1257-1268; both legs use the same bounded rate (I-1).
 
-**If violated** — Stale queued txs could execute at unfavorable later prices.
+**If violated** — rounding direction favors the protocol by ≤1 wei per leg (intentional).
 
 ---
 
-**Categories:**
-- **Conservation**: equal-and-opposite deltas in one function body.
-- **Bound**: a storage variable constrained across all write sites.
-- **Ratio**: a value defined as a formula of other storage variables.
-- **StateMachine**: discrete transitions guarded against reversal.
-- **Temporal**: a condition on `block.timestamp` / `block.number` / a deadline.
+#### I-15
+
+`Temporal` · On-chain: **Yes**
+
+> Every position-manager write carries `deadline = block.timestamp + 300`.
+
+**Derivation** — temporal: mint/increase/decrease/collect all pass `deadline: block.timestamp + 300` (e.g. 699, 730, 827, 902, 972, 1211).
+
+**If violated** — a pending keeper tx could execute at a stale price after long mempool delay; the 5-minute deadline bounds that window.
+
+---
+
+**Categories:** Conservation (equal-and-opposite Δ) · Bound (lifted guard across all writers) · Ratio (storage-formula) · StateMachine (guarded transition) · Temporal (block.timestamp/number).
 
 ---
 
 ## 3. Inferred Invariants (Cross-Contract)
 
+---
+
 #### X-1
 
-On-chain: **No**
+On-chain: **Yes**
 
-> Vault valuation trusts `OracleLib.getTwapSqrtPrice` to reflect fair token1/token0 price; `totalAssets()` is priced purely from TWAP with no spot cross-check in the view path.
+> The vault assumes `CLDexAdapter.positions()` returns `(tickLower, tickUpper, liquidity, tokensOwed0, tokensOwed1, token0, token1)` in exactly that order, re-projected from the position manager's 12-field struct.
 
-**Caller side** — `RebalancerVaultUpgradeable.sol:1044` (`token1ToToken0(bal1, getTwapSqrtPrice(...))`) feeds `convertToShares/Assets`.
+**Caller side** — `RebalancerVaultUpgradeable.sol:1303-1319` (`_adapterPositions`) — destructures the tuple for valuation, slippage, and fee math.
 
-**Callee side** — `OracleLib.sol:19-22` derives the TWAP tick solely from `ICLPool.observe`; a pool with a short/thin observation history or attacker-seeded observations moves it.
+**Callee side** — `CLDexAdapter.sol:33-63` — maps `INonfungiblePositionManager.positions` fields into the tuple; a wrong index silently corrupts every downstream calculation.
 
-**If violated** — Mispriced shares on deposit/redeem. Value-moving flows add `requireSpotNearTwap` (G-21), but `totalAssets()`/`maxWithdraw` reads do not.
+**If violated** — mis-indexed liquidity/owed values feed slippage floors, fee isolation, and TVL.
 
 ---
 
@@ -275,41 +288,57 @@ On-chain: **No**
 
 On-chain: **No**
 
-> The vault delegatecalls `dexAdapter` code into its own storage/token context, trusting it fully; `setDexAdapter` and `setStrategy` can repoint these to arbitrary code.
+> token1 value converts to token0 via the pool TWAP sqrt price with acceptable fidelity for share pricing and redeem payouts.
 
-**Caller side** — `_delegateAdapter:1218` executes `dexAdapter.delegatecall(data)` with vault funds/NFT in scope.
+**Caller side** — `RebalancerVaultUpgradeable.sol:1151` (`_totalVaultValueInToken0`), `redeem:598-603`, `withdraw:498-501` — use `VaultMath.token1ToToken0(bal1, OracleLib.getTwapSqrtPrice(...))`.
 
-**Callee side** — `setDexAdapter:921-924` / `setStrategy:915-918` write the target with only a zero-address check.
+**Callee side** — `OracleLib.sol:32-37` derives the sqrt price from `observe()`; `VaultMath.sol:21-33` squares `sqrtPrice` in Q96. **Gap**: no check the pool holds ≥ `twapSeconds` of observations (cardinality) — a low-cardinality pool reverts (`OLD`) or a manipulable/stale one skews the BTC↔MUSD magnitude conversion.
 
-**If violated** — A malicious adapter/strategy set by owner can move all vault funds (owner trust boundary).
+**If violated** — mispriced token1 leg distorts `totalAssets`, redeem `assets`, and withdraw swap sizing.
 
 ---
 
 #### X-3
 
+On-chain: **No**
+
+> The delegatecalled adapter is stateless (declares no storage), so its writes touch only the position manager / router — never vault storage slots.
+
+**Caller side** — `RebalancerVaultUpgradeable.sol:1322-1332` (`_delegateAdapter`) delegatecalls `s.dexAdapter` with mint/increase/decrease/collect/burn/swap calldata.
+
+**Callee side** — `CLDexAdapter.sol:13` declares no state variables, satisfying the assumption for the shipped adapter. **Gap**: `setDexAdapter`@1028 lets the owner repoint `dexAdapter` to any contract, executed in vault context.
+
+**If violated** — a malicious/incorrect adapter under delegatecall can overwrite any vault storage slot or move funds.
+
+---
+
+#### X-4
+
 On-chain: **Yes**
 
-> Vault re-validates the untrusted strategy's tick output before use.
+> Strategy-provided ranges are re-validated by the vault, not trusted blindly.
 
-**Caller side** — `_strategyRange:1284` calls `IStrategy.computeRange`, then asserts `lo < hi` and TickMath bounds (`:1288-1290`).
+**Caller side** — `RebalancerVaultUpgradeable.sol:1399-1409` (`_strategyRange`) checks `lo < hi` and `[MIN_TICK, MAX_TICK]`.
 
-**Callee side** — `Strategy.sol:18-24` computes ticks from TWAP; output cannot bypass the caller-side check.
+**Callee side** — `Strategy.sol:18-24` (`computeRange`) returns floor/ceil of `twapTick ± halfWidth`; an inverted or out-of-bounds range cannot pass the vault.
 
-**If violated** — N/A while re-validation stays; removing it would let a bad strategy force invalid ranges.
+**If violated** — without re-validation a faulty strategy could mint a degenerate range; the check closes that.
 
 ---
 
 ## 4. Economic Invariants
 
+---
+
 #### E-1
 
 On-chain: **No**
 
-> Share price should rise only from accrued swap fees, never from manipulation or donation.
+> Share price cannot be manipulated within a single block by moving the pool spot.
 
-**Follows from** — I-11 (ratio) + I-12 (balanceOf-based totalAssets) + X-1 (TWAP valuation).
+**Follows from** — I-11 + X-2 + G-20 (spot-near-TWAP). Valuation uses TWAP (not spot) and user actions require spot within `maxTwapDeviationTicks`, but I-11's `balanceOf`-based `totalAssets` (donation) and X-2's missing cardinality/observation guarantee leave residual manipulation surface.
 
-**If violated** — A donation or TWAP shift changes redemption value for existing holders; DEAD_SHARES (I-10) blunts but does not remove the first-depositor case.
+**If violated** — a first/large depositor could tilt `sharePrice` via donation or TWAP staleness.
 
 ---
 
@@ -317,8 +346,20 @@ On-chain: **No**
 
 On-chain: **No**
 
-> Net asset value out on redeem should not exceed pro-rata backing.
+> First-depositor inflation is fully neutralized.
 
-**Follows from** — I-1 (fee split) + I-11 (ratio) + X-1 (TWAP price used to value the token1 leg paid out in `redeem`).
+**Follows from** — I-9 (fixed 1000 dead shares) + I-11 (donation-sensitive `totalAssets`). The dead-share offset is a fixed constant, not a virtual-asset offset, so a large donation before the second deposit can still round the second depositor's shares down.
 
-**If violated** — Redeemers valued at a TWAP that diverges from executable price could extract more/less than fair share; the token1 leg is paid in kind, so realized value depends on the same TWAP.
+**If violated** — the classic ERC-4626 inflation attack against early depositors.
+
+---
+
+#### E-3
+
+On-chain: **Yes**
+
+> Performance fee is charged only on the fee portion (swept − principal), never on depositor principal.
+
+**Follows from** — I-1 (bounded rate) + I-14 + the `swept − p` / `tokensOwed − principal` separation at withdraw:484-487, redeem:561-568, rebalance:842-858, collectFees:754-759.
+
+**If violated** — principal-eroding fees; the explicit principal subtraction prevents it.

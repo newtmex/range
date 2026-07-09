@@ -29,6 +29,17 @@ interface IDexAdapter {
         uint256 amount1Min;
         uint256 deadline;
     }
+    struct IncreaseArgs {
+        address positionManager;
+        address token0;
+        address token1;
+        uint256 tokenId;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
     struct CollectArgs {
         address positionManager;
         uint256 tokenId;
@@ -60,6 +71,8 @@ interface IDexAdapter {
     // ── writes (delegatecall, in vault context) ──
     function mint(MintArgs calldata p)
         external returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    function increaseLiquidity(IncreaseArgs calldata p)
+        external returns (uint128 liquidity, uint256 amount0, uint256 amount1);
     function decreaseLiquidity(DecreaseArgs calldata p) external returns (uint256 amount0, uint256 amount1);
     function collect(CollectArgs calldata p) external returns (uint256 amount0, uint256 amount1);
     function burn(address positionManager, uint256 tokenId) external;

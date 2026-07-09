@@ -163,6 +163,34 @@ contract VaultLens {
             );
     }
 
+    /// @notice Optimal swap direction + amount to pass into the vault's deployIdle().
+    ///         Unlike computeRebalanceParams this keeps the EXISTING position range and
+    ///         balances only the vault's idle tokens (the position is not removed), so
+    ///         it must NOT include the position's principal in the balances.
+    function computeDeployIdleParams(
+        address vault
+    ) external view returns (bool swapZeroForOne, uint256 swapAmount) {
+        IVaultView v = IVaultView(vault);
+        uint256 tid = v.tokenId();
+        require(tid != 0, "VaultLens: no position");
+
+        address adapter = v.dexAdapter();
+        address poolAddr = v.pool();
+
+        (int24 lo, int24 hi, , , , address token0, address token1) =
+            _positions(v, tid);
+        (uint160 sqrtPriceX96, ) = IDexAdapter(adapter).slot0(poolAddr);
+
+        return
+            IStrategy(v.strategy()).computeOptimalSwap(
+                sqrtPriceX96,
+                TickMath.getSqrtRatioAtTick(lo),
+                TickMath.getSqrtRatioAtTick(hi),
+                IERC20(token0).balanceOf(vault),
+                IERC20(token1).balanceOf(vault)
+            );
+    }
+
     // ─── Internal helpers ────────────────────────────────────────────────────────
 
     function _positions(

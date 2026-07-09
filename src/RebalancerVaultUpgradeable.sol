@@ -63,6 +63,12 @@ contract RebalancerVaultUpgradeable is
         int24 tickUpper
     );
     event FeesCollected(uint256 fee0, uint256 fee1, address indexed recipient);
+    event IdleDeployed(
+        uint256 indexed tokenId,
+        uint128 addedLiquidity,
+        uint256 amount0,
+        uint256 amount1
+    );
     event OperatorUpdated(address indexed newOperator);
     event VaultPaused(bool paused);
     event PerformanceFeeUpdated(uint256 bps, address indexed recipient);
@@ -904,6 +910,73 @@ contract RebalancerVaultUpgradeable is
         emit Rebalanced(oldTokenId, newTokenId, newLo, newHi, newLiquidity);
     }
 
+    /// @notice Deploy idle vault balances into the EXISTING position without moving
+    ///         its range. The operator supplies the swap needed to reach the range's
+    ///         value ratio (single-sided deposits can't be added to a two-sided range
+    ///         otherwise), computed off-chain via VaultLens.computeDeployIdleParams;
+    ///         the swap's min-out is still enforced on-chain from TWAP + slippageBps.
+    ///         Then increaseLiquidity into the current tokenId — any dust the position
+    ///         manager refunds stays idle for the next call. Use this to compound fresh
+    ///         deposits; reserve rebalance() for actually re-ranging.
+    /// @param swapZeroForOne True to swap token0 → token1 before adding liquidity.
+    /// @param swapAmount     Amount of the input token to swap (0 to skip the swap).
+    function deployIdle(
+        bool swapZeroForOne,
+        uint256 swapAmount
+    ) external whenNotPaused onlyOperator nonReentrant positionExists {
+        _requireSpotNearTwap();
+
+        VaultStorageLib.VaultStorage storage s = _s();
+        (int24 lo, int24 hi, , , , , ) = _adapterPositions(s.tokenId);
+        uint160 sqrtTwap = OracleLib.getTwapSqrtPrice(s.pool, s.twapSeconds);
+
+        uint256 bal0 = IERC20(s.token0).balanceOf(address(this));
+        uint256 bal1 = IERC20(s.token1).balanceOf(address(this));
+        if (bal0 == 0 && bal1 == 0) revert NothingToMint();
+
+        if (swapAmount > 0) {
+            _executeSwap(
+                swapZeroForOne,
+                swapAmount,
+                VaultMath.computeSwapMinOut(
+                    swapAmount,
+                    swapZeroForOne,
+                    sqrtTwap,
+                    s.slippageBps
+                )
+            );
+            bal0 = IERC20(s.token0).balanceOf(address(this));
+            bal1 = IERC20(s.token1).balanceOf(address(this));
+        }
+
+        (uint256 min0, uint256 min1) = VaultMath.computeMintSlippage(
+            sqrtTwap,
+            lo,
+            hi,
+            bal0,
+            bal1,
+            0,
+            s.slippageBps
+        );
+
+        (uint128 addedLiq, uint256 used0, uint256 used1) = _increaseLiquidity(
+            IDexAdapter.IncreaseArgs({
+                positionManager: s.positionManager,
+                token0: s.token0,
+                token1: s.token1,
+                tokenId: s.tokenId,
+                amount0Desired: bal0,
+                amount1Desired: bal1,
+                amount0Min: min0,
+                amount1Min: min1,
+                deadline: block.timestamp + 300
+            })
+        );
+
+        if (addedLiq == 0) revert NoLiquidityMinted();
+        emit IdleDeployed(s.tokenId, addedLiq, used0, used1);
+    }
+
     // ─── Admin ──────────────────────────────────────────────────────────────────
 
     function transferOwnership(address newOwner_) external onlyOwner {
@@ -1266,6 +1339,18 @@ contract RebalancerVaultUpgradeable is
             abi.decode(
                 _delegateAdapter(abi.encodeCall(IDexAdapter.mint, (a))),
                 (uint256, uint128, uint256, uint256)
+            );
+    }
+
+    function _increaseLiquidity(
+        IDexAdapter.IncreaseArgs memory a
+    ) private returns (uint128 liq, uint256 a0, uint256 a1) {
+        return
+            abi.decode(
+                _delegateAdapter(
+                    abi.encodeCall(IDexAdapter.increaseLiquidity, (a))
+                ),
+                (uint128, uint256, uint256)
             );
     }
 

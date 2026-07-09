@@ -96,6 +96,25 @@ contract CLDexAdapter is IDexAdapter {
             );
     }
 
+    function increaseLiquidity(
+        IncreaseArgs calldata p
+    ) external returns (uint128 liquidity, uint256 amount0, uint256 amount1) {
+        IERC20(p.token0).forceApprove(p.positionManager, p.amount0Desired);
+        IERC20(p.token1).forceApprove(p.positionManager, p.amount1Desired);
+
+        return
+            INonfungiblePositionManager(p.positionManager).increaseLiquidity(
+                INonfungiblePositionManager.IncreaseLiquidityParams({
+                    tokenId: p.tokenId,
+                    amount0Desired: p.amount0Desired,
+                    amount1Desired: p.amount1Desired,
+                    amount0Min: p.amount0Min,
+                    amount1Min: p.amount1Min,
+                    deadline: p.deadline
+                })
+            );
+    }
+
     function decreaseLiquidity(
         DecreaseArgs calldata p
     ) external returns (uint256 amount0, uint256 amount1) {
