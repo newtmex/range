@@ -43,6 +43,6 @@ export const mezoMainnet = defineChain({
 export const wagmiConfig = getDefaultConfig({
   appName: "Mezo Rebalancer",
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo",
-  chains: [mezoTestnet, mezoMainnet],
+  chains: [mezoMainnet, mezoTestnet],
   ssr: true,
 });

@@ -31,8 +31,8 @@ import {
 // closer to the original two-point comparison that produced the 9474% bug;
 // the TVL-weighted smoothing + sanity clamp in computeTrailingApy are the
 // only backstop against noise here. Widen this once vaults are longer-lived.
-const WINDOW_SECONDS = 2 * 3600; // 2 hours
-const SAMPLE_INTERVAL_SECONDS = 1 * 3600; // 1 hour between snapshots (6 samples, 5 pairwise intervals)
+const WINDOW_SECONDS = 24 * 3600; // 24 hours
+const SAMPLE_INTERVAL_SECONDS = 2 * 3600; // 2 hours between snapshots (6 samples, 5 pairwise intervals)
 
 const SHARE_PRICE_ABI = VAULT_LENS_ABI.filter((x) => x.name === "sharePrice");
 const POOL_STATE_ABI = VAULT_LENS_ABI.filter((x) => x.name === "getPoolState");
@@ -80,8 +80,17 @@ async function estimateSampleBlocks(
     const block = blocksAgo < latest ? latest - blocksAgo : oldestBlock;
     samples.push({ block, targetTimestamp: t });
   }
-  // Always include the latest block as the newest sample.
-  samples.push({ block: latest, targetTimestamp: now });
+  // Always include the latest block as the newest sample, unless the loop
+  // above already landed exactly on `now` (e.g. WINDOW_SECONDS is an exact
+  // multiple of SAMPLE_INTERVAL_SECONDS) — otherwise this duplicates the
+  // last loop sample, producing a zero-second pairwise interval that skews
+  // computeTrailingApy's annualization.
+  if (
+    samples.length === 0 ||
+    samples[samples.length - 1].targetTimestamp !== now
+  ) {
+    samples.push({ block: latest, targetTimestamp: now });
+  }
   return samples;
 }
 
@@ -190,17 +199,8 @@ export function useVaultApy(
       setApy(undefined);
       return;
     }
-    // Cheap pre-check against wall-clock time, before any RPC calls. Require
-    // the full window's worth of real vault history — annualizing a vault's
-    // bootstrapping period produces numbers with no relationship to real
-    // yield (verified: a vault ~28h old with a few small deposits and one
-    // rebalance produced 9474% "APY" purely from initialization noise).
-    const wallClockNow = Math.floor(Date.now() / 1000);
-    if (!isVaultOldEnough(wallClockNow, firstEventTimestamp)) {
-      console.log("useVaultApy: vault too young for APY estimate");
-      setApy(undefined);
-      return;
-    }
+  
+    
     try {
       const lensAddress = getVaultLensAddress(chainId);
       const latest = await client.getBlockNumber();
