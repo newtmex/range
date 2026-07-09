@@ -29,7 +29,7 @@ export function LogoMark({ size = 32 }: { size?: number }) {
   );
 }
 
-export function Logo({ href = "/vault" }: { href?: string }) {
+export function Logo({ href = "/" }: { href?: string }) {
   return (
     <a href={href} aria-label="Range — home" className="tap flex items-center gap-2.5 flex-shrink-0 rounded-lg">
       <LogoMark />
