@@ -20,9 +20,6 @@ interface IVaultView {
     function dexAdapter() external view returns (address);
     function strategy() external view returns (address);
     function twapSeconds() external view returns (uint32);
-    function rebalanceCount() external view returns (uint256);
-    function totalFees0Earned() external view returns (uint256);
-    function totalFees1Earned() external view returns (uint256);
 }
 
 /// @title VaultLens
@@ -31,13 +28,13 @@ interface IVaultView {
 contract VaultLens {
     // ─── Structs ─────────────────────────────────────────────────────────────────
 
+    /// @dev Cumulative analytics (rebalance count, fees earned) are intentionally
+    ///      NOT included here — they are event-sourced off-chain from the vault's
+    ///      Rebalanced / FeesCollected events rather than read on-chain.
     struct VaultMetrics {
         uint256 tvl;
         int24 tickLower;
         int24 tickUpper;
-        uint256 rebalanceCount;
-        uint256 totalFees0Earned;
-        uint256 totalFees1Earned;
     }
 
     struct PositionInfo {
@@ -71,9 +68,6 @@ contract VaultLens {
     ) external view returns (VaultMetrics memory m) {
         IVaultView v = IVaultView(vault);
         m.tvl = v.totalAssets();
-        m.rebalanceCount = v.rebalanceCount();
-        m.totalFees0Earned = v.totalFees0Earned();
-        m.totalFees1Earned = v.totalFees1Earned();
         uint256 tid = v.tokenId();
         if (tid != 0) {
             (m.tickLower, m.tickUpper, , , , , ) = _positions(v, tid);

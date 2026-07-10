@@ -64,9 +64,9 @@ Range strategy options:
 
 | Strategy | Half-width (ticks) | Best for                                  |
 | -------- | ------------------ | ----------------------------------------- |
-| TIGHT    | ±300               | Low-volatility pairs, maximum fee capture |
-| MEDIUM   | ±700               | Balanced risk/reward (default)            |
-| WIDE     | ±1200              | High-volatility pairs, fewer rebalances   |
+| TIGHT    | ±600               | Low-volatility pairs, maximum fee capture |
+| MEDIUM   | ±1000               | Balanced risk/reward (default)            |
+| WIDE     | ±2000              | High-volatility pairs, fewer rebalances   |
 
 ## Security
 

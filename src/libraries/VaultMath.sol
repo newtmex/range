@@ -47,7 +47,7 @@ library VaultMath {
         uint160 sqrtB,
         uint256 balance0,
         uint256 balance1
-    ) internal pure returns (bool swapZeroForOne, uint256 swapAmount) {
+    ) public pure returns (bool swapZeroForOne, uint256 swapAmount) {
         // Price outside the target range → the position needs only one token.
         if (sqrtP <= sqrtA) return (false, balance1); // below range: all token0 → sell all token1
         if (sqrtP >= sqrtB) return (true, balance0); //  above range: all token1 → sell all token0
@@ -106,7 +106,7 @@ library VaultMath {
         uint256 amount1,
         uint128 liquidity,
         uint256 slippageBps
-    ) internal pure returns (uint256 min0, uint256 min1) {
+    ) public pure returns (uint256 min0, uint256 min1) {
         uint160 sqrtLower = TickMath.getSqrtRatioAtTick(tickLower);
         uint160 sqrtUpper = TickMath.getSqrtRatioAtTick(tickUpper);
 

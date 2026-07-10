@@ -24,9 +24,13 @@ library VaultStorageLib {
         uint256 pendingFeeBps;
         address pendingFeeRecipient;
         uint256 feeChangeActiveAt;
-        uint256 rebalanceCount;
-        uint256 totalFees0Earned;
-        uint256 totalFees1Earned;
+        // Reserved: formerly rebalanceCount / totalFees0Earned / totalFees1Earned.
+        // These cumulative analytics are now event-sourced (Rebalanced /
+        // FeesCollected). Slots are retained (never removed/reordered) to keep the
+        // upgradeable storage layout stable for already-deployed vaults.
+        uint256 __reserved_rebalanceCount;
+        uint256 __reserved_totalFees0Earned;
+        uint256 __reserved_totalFees1Earned;
         uint32 twapSeconds;
         int24 maxTwapDeviationTicks;
         uint256 slippageBps;

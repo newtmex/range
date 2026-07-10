@@ -259,15 +259,11 @@ contract RebalancerVaultUpgradeable is
     function feeChangeActiveAt() public view returns (uint256) {
         return _s().feeChangeActiveAt;
     }
-    function rebalanceCount() public view returns (uint256) {
-        return _s().rebalanceCount;
-    }
-    function totalFees0Earned() public view returns (uint256) {
-        return _s().totalFees0Earned;
-    }
-    function totalFees1Earned() public view returns (uint256) {
-        return _s().totalFees1Earned;
-    }
+    // NOTE: rebalanceCount / totalFees0Earned / totalFees1Earned are no longer
+    // exposed as getters or maintained on-chain. These cumulative analytics are
+    // now derived off-chain from the Rebalanced and FeesCollected events (see
+    // VaultLens / frontend event indexer). The backing storage slots are retained
+    // in VaultStorageLib as reserved gaps to preserve the upgradeable layout.
     function twapSeconds() public view returns (uint32) {
         return _s().twapSeconds;
     }
@@ -394,21 +390,7 @@ contract RebalancerVaultUpgradeable is
 
         IERC20(s.token0).safeTransferFrom(msg.sender, address(this), assets);
 
-        if (supply == 0) {
-            if (assets <= DEAD_SHARES) revert BelowMinDeposit();
-            _mint(address(0xdead), DEAD_SHARES);
-            shares = assets - DEAD_SHARES;
-        } else {
-            if (totalValBefore == 0) revert NoAssets();
-            shares = Math.mulDiv(
-                assets,
-                supply,
-                totalValBefore,
-                Math.Rounding.Floor
-            );
-        }
-
-        if (shares == 0) revert ZeroAmount();
+        shares = _seedAndComputeShares(assets, supply, totalValBefore);
         _mint(receiver, shares);
         emit Deposit(msg.sender, receiver, assets, shares);
     }
@@ -485,8 +467,6 @@ contract RebalancerVaultUpgradeable is
             swept0 - p0,
             swept1 - p1
         );
-        s.totalFees0Earned += fee0;
-        s.totalFees1Earned += fee1;
         if (fee0 > 0 || fee1 > 0)
             emit FeesCollected(fee0, fee1, s.feeRecipient);
 
@@ -562,8 +542,8 @@ contract RebalancerVaultUpgradeable is
             swept0 - p0,
             swept1 - p1
         );
-        s.totalFees0Earned += fee0;
-        s.totalFees1Earned += fee1;
+        if (fee0 > 0 || fee1 > 0)
+            emit FeesCollected(fee0, fee1, s.feeRecipient);
         swept0 -= fee0;
         swept1 -= fee1;
 
@@ -652,21 +632,7 @@ contract RebalancerVaultUpgradeable is
         );
         if (depositValToken0 == 0) revert ZeroAmount();
 
-        if (supply == 0) {
-            if (depositValToken0 <= DEAD_SHARES) revert BelowMinDeposit();
-            _mint(address(0xdead), DEAD_SHARES);
-            shares = depositValToken0 - DEAD_SHARES;
-        } else {
-            if (totalValBefore == 0) revert NoAssets();
-            shares = Math.mulDiv(
-                depositValToken0,
-                supply,
-                totalValBefore,
-                Math.Rounding.Floor
-            );
-        }
-
-        if (shares == 0) revert ZeroAmount();
+        shares = _seedAndComputeShares(depositValToken0, supply, totalValBefore);
         _mint(receiver, shares);
         emit Token1Deposited(msg.sender, receiver, token1Amount, shares);
     }
@@ -758,8 +724,6 @@ contract RebalancerVaultUpgradeable is
         net0 = uint256(tokensOwed0) - fee0;
         net1 = uint256(tokensOwed1) - fee1;
 
-        s.totalFees0Earned += fee0;
-        s.totalFees1Earned += fee1;
         if (fee0 > 0 || fee1 > 0)
             emit FeesCollected(fee0, fee1, s.feeRecipient);
     }
@@ -856,8 +820,6 @@ contract RebalancerVaultUpgradeable is
             uint256(feesOwed0),
             uint256(feesOwed1)
         );
-        s.totalFees0Earned += fee0;
-        s.totalFees1Earned += fee1;
         if (fee0 > 0 || fee1 > 0)
             emit FeesCollected(fee0, fee1, s.feeRecipient);
 
@@ -906,7 +868,6 @@ contract RebalancerVaultUpgradeable is
         if (newLiquidity == 0) revert NoLiquidityMinted();
 
         s.tokenId = newTokenId;
-        s.rebalanceCount++;
         emit Rebalanced(oldTokenId, newTokenId, newLo, newHi, newLiquidity);
     }
 
@@ -1268,6 +1229,38 @@ contract RebalancerVaultUpgradeable is
         );
         if (fee0 > 0) IERC20(s.token0).safeTransfer(s.feeRecipient, fee0);
         if (fee1 > 0) IERC20(s.token1).safeTransfer(s.feeRecipient, fee1);
+    }
+
+    // ─── Private: deposit share math ─────────────────────────────────────────────
+
+    /// @dev Shared token0-denominated deposit math for {deposit} and {depositToken1}.
+    ///      On the first deposit (supply == 0) it enforces the minimum and mints the
+    ///      permanent DEAD_SHARES to 0xdead; otherwise it prices the deposit pro-rata
+    ///      against the pre-deposit vault value. Reverts if the resulting share amount
+    ///      would round to zero. Does NOT mint the receiver's shares — the caller does
+    ///      that (and emits its own deposit event).
+    /// @param valueInToken0  Deposit value expressed in token0 units.
+    /// @param supply         totalSupply() captured before minting.
+    /// @param totalValBefore Total vault value in token0 captured before the transfer in.
+    function _seedAndComputeShares(
+        uint256 valueInToken0,
+        uint256 supply,
+        uint256 totalValBefore
+    ) private returns (uint256 shares) {
+        if (supply == 0) {
+            if (valueInToken0 <= DEAD_SHARES) revert BelowMinDeposit();
+            _mint(address(0xdead), DEAD_SHARES);
+            shares = valueInToken0 - DEAD_SHARES;
+        } else {
+            if (totalValBefore == 0) revert NoAssets();
+            shares = Math.mulDiv(
+                valueInToken0,
+                supply,
+                totalValBefore,
+                Math.Rounding.Floor
+            );
+        }
+        if (shares == 0) revert ZeroAmount();
     }
 
     // ─── Private: misc ───────────────────────────────────────────────────────────

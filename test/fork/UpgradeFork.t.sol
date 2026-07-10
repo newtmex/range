@@ -33,9 +33,6 @@ contract UpgradeForkTest is Test {
     uint256 tokenIdBefore;
     uint256 performanceFeeBpsBefore;
     address feeRecipientBefore;
-    uint256 rebalanceCountBefore;
-    uint256 totalFees0Before;
-    uint256 totalFees1Before;
     uint32 twapSecondsBefore;
     uint256 totalSupplyBefore;
     uint256 totalAssetsBefore;
@@ -66,9 +63,6 @@ contract UpgradeForkTest is Test {
         tokenIdBefore = vault.tokenId();
         performanceFeeBpsBefore = vault.performanceFeeBps();
         feeRecipientBefore = vault.feeRecipient();
-        rebalanceCountBefore = vault.rebalanceCount();
-        totalFees0Before = vault.totalFees0Earned();
-        totalFees1Before = vault.totalFees1Earned();
         twapSecondsBefore = vault.twapSeconds();
         totalSupplyBefore = vault.totalSupply();
         totalAssetsBefore = vault.totalAssets();
@@ -109,9 +103,6 @@ contract UpgradeForkTest is Test {
         assertEq(vault.tokenId(), tokenIdBefore, "tokenId changed");
         assertEq(vault.performanceFeeBps(), performanceFeeBpsBefore, "performanceFeeBps changed");
         assertEq(vault.feeRecipient(), feeRecipientBefore, "feeRecipient changed");
-        assertEq(vault.rebalanceCount(), rebalanceCountBefore, "rebalanceCount changed");
-        assertEq(vault.totalFees0Earned(), totalFees0Before, "totalFees0Earned changed");
-        assertEq(vault.totalFees1Earned(), totalFees1Before, "totalFees1Earned changed");
         assertEq(vault.twapSeconds(), twapSecondsBefore, "twapSeconds changed");
         assertEq(vault.totalSupply(), totalSupplyBefore, "totalSupply changed");
         // token0 (live MUSD) accrues yield continuously against block.timestamp,

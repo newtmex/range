@@ -34,9 +34,6 @@ contract VaultLensTest is BaseTest {
     function test_getVaultMetrics_initialState() public {
         _initialDeposit(10e8);
         VaultLens.VaultMetrics memory m = lens.getVaultMetrics(address(vault));
-        assertEq(m.rebalanceCount, 0);
-        assertEq(m.totalFees0Earned, 0);
-        assertEq(m.totalFees1Earned, 0);
         assertGt(m.tvl, 0);
         // No position yet → ticks are zero.
         assertEq(m.tickLower, 0);

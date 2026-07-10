@@ -146,19 +146,27 @@ contract VaultLifecycleTest is BaseTest {
         vault.rebalance(false, 0);
 
         assertGt(vault.tokenId(), oldId);
-        assertEq(vault.rebalanceCount(), 1);
     }
 
-    function test_rebalance_incrementsRebalanceCount() public {
+    /// @dev rebalanceCount is no longer stored on-chain; it is derived off-chain by
+    ///      counting Rebalanced events. Assert one event is emitted per rebalance.
+    function test_rebalance_emitsRebalancedPerCall() public {
         _initialDeposit(10e18);
         _initPosition(LO, HI, 5e18, 0);
 
+        vm.recordLogs();
         vm.prank(operator);
         vault.rebalance(false, 0);
         vm.prank(operator);
         vault.rebalance(false, 0);
 
-        assertEq(vault.rebalanceCount(), 2);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("Rebalanced(uint256,uint256,int24,int24,uint128)");
+        uint256 count;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == sig) count++;
+        }
+        assertEq(count, 2, "expected 2 Rebalanced events");
     }
 
     // ── withdraw / redeem ─────────────────────────────────────────────────────

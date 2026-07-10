@@ -31,11 +31,18 @@ contract PositionTest is BaseTest {
         _initPosition(LO, HI, 5e18, 0);
 
         MockPositionManager(PM_ADDR).setPendingFees(vault.tokenId(), 2e18, 0); // 2 MUSD
+
+        // Fees earned are event-sourced: 10% of 2e18 = 2e17 charged on token0.
+        vm.recordLogs();
         vm.prank(operator);
         vault.collectFees(0, 0);
 
-        // 10% of 2e18 = 2e17 fee charged; totalFees0Earned tracks it.
-        assertEq(vault.totalFees0Earned(), 2e17);
+        (uint256 f0, uint256 f1, address r) = _findFeesCollected(
+            vm.getRecordedLogs()
+        );
+        assertEq(f0, 2e17);
+        assertEq(f1, 0);
+        assertEq(r, vault.feeRecipient());
     }
 
     function test_position_collectFees_increasesFees1Earned() public {
@@ -43,11 +50,18 @@ contract PositionTest is BaseTest {
         _initPosition(LO, HI, 5e18, 0);
 
         MockPositionManager(PM_ADDR).setPendingFees(vault.tokenId(), 0, 1e6); // 0.01 BTC
+
+        // Fees earned are event-sourced: 10% of 1e6 = 1e5 charged on token1.
+        vm.recordLogs();
         vm.prank(operator);
         vault.collectFees(0, 0);
 
-        // 10% of 1e6 = 1e5 fee charged; totalFees1Earned tracks it.
-        assertEq(vault.totalFees1Earned(), 1e5);
+        (uint256 f0, uint256 f1, address r) = _findFeesCollected(
+            vm.getRecordedLogs()
+        );
+        assertEq(f0, 0);
+        assertEq(f1, 1e5);
+        assertEq(r, vault.feeRecipient());
     }
 
     function test_position_collectFees_zeroFeesBpsSkipsFeeTransfer() public {
@@ -102,24 +116,71 @@ contract PositionTest is BaseTest {
 
         MockPositionManager(PM_ADDR).setPendingFees(vault.tokenId(), 1e18, 0);
 
+        vm.recordLogs();
         vm.prank(operator);
         vault.rebalance(false, 0);
 
-        assertGt(vault.totalFees0Earned(), 0);
-        assertGt(vault.rebalanceCount(), 0);
+        (uint256 rebalances, uint256 feeSum0) = _countRebalancesAndFees(
+            vm.getRecordedLogs()
+        );
+        assertGt(feeSum0, 0);
+        assertGt(rebalances, 0);
     }
 
     function test_position_multipleRebalancesAccumulateFees() public {
         _initialDeposit(10e18);
         _initPosition(LO, HI, 5e18, 0);
 
+        vm.recordLogs();
         for (uint i; i < 3; i++) {
             MockPositionManager(PM_ADDR).setPendingFees(vault.tokenId(), 1e18, 0);
             vm.prank(operator);
             vault.rebalance(false, 0);
         }
 
-        assertEq(vault.rebalanceCount(), 3);
-        assertGt(vault.totalFees0Earned(), 0);
+        (uint256 rebalances, uint256 feeSum0) = _countRebalancesAndFees(
+            vm.getRecordedLogs()
+        );
+        assertEq(rebalances, 3);
+        assertGt(feeSum0, 0);
+    }
+
+    // ── event-sourcing helpers ─────────────────────────────────────────────────
+
+    /// @dev rebalanceCount / totalFeesEarned are no longer on-chain; reconstruct
+    ///      them from Rebalanced / FeesCollected event logs, mirroring how the
+    ///      off-chain indexer derives these analytics.
+    function _countRebalancesAndFees(
+        Vm.Log[] memory logs
+    ) internal pure returns (uint256 rebalances, uint256 feeSum0) {
+        bytes32 rebSig = keccak256(
+            "Rebalanced(uint256,uint256,int24,int24,uint128)"
+        );
+        bytes32 feeSig = keccak256("FeesCollected(uint256,uint256,address)");
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == rebSig) {
+                rebalances++;
+            } else if (logs[i].topics[0] == feeSig) {
+                (uint256 f0, ) = abi.decode(logs[i].data, (uint256, uint256));
+                feeSum0 += f0;
+            }
+        }
+    }
+
+    /// @dev Locate the single FeesCollected event and decode its (fee0, fee1)
+    ///      data plus indexed recipient.
+    function _findFeesCollected(
+        Vm.Log[] memory logs
+    ) internal pure returns (uint256 fee0, uint256 fee1, address recipient) {
+        bytes32 feeSig = keccak256("FeesCollected(uint256,uint256,address)");
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == feeSig) {
+                (fee0, fee1) = abi.decode(logs[i].data, (uint256, uint256));
+                recipient = address(uint160(uint256(logs[i].topics[1])));
+                return (fee0, fee1, recipient);
+            }
+        }
+        revert("no FeesCollected event");
     }
 }

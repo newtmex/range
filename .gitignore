@@ -17,10 +17,11 @@ docs/
 # Local Claude Code skills directory
 skills/
 
+# Temporary audit bundle folders
+.audit-*/
+
 # Node
 node_modules/
 .next/
 
-
-broadcast/
 package-lock.json
