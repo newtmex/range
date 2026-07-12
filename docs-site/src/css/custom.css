@@ -1,0 +1,101 @@
+/**
+ * Range documentation theme.
+ * Mirrors the frontend palette (frontend/src/app/globals.css + tailwind.config.ts):
+ *   brand rose  #E11D48 / #BE123C, light surfaces, IBM Plex Sans / Mono.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+:root {
+  /* Brand (rose/crimson) — from frontend --red / --red-dark */
+  --ifm-color-primary: #e11d48;
+  --ifm-color-primary-dark: #cc1a41;
+  --ifm-color-primary-darker: #be123c;
+  --ifm-color-primary-darkest: #9f0f32;
+  --ifm-color-primary-light: #eb2552;
+  --ifm-color-primary-lighter: #f43f5e;
+  --ifm-color-primary-lightest: #fb7185;
+
+  /* Typography — IBM Plex to match the app */
+  --ifm-font-family-base: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --ifm-font-family-monospace: "IBM Plex Mono", ui-monospace, monospace;
+  --ifm-heading-font-weight: 600;
+  --ifm-font-size-base: 16px;
+  --ifm-code-font-size: 92%;
+
+  /* Surfaces / text — from frontend light theme tokens */
+  --ifm-background-color: #f8f8fa;
+  --ifm-background-surface-color: #fbfbfd;
+  --ifm-navbar-background-color: rgba(248, 248, 250, 0.85);
+  --ifm-footer-background-color: #0d0d12;
+  --ifm-heading-color: #0d0d12;
+  --ifm-font-color-base: #1a1a22;
+  --ifm-color-emphasis-600: #565660;
+  --ifm-toc-border-color: #e7e7ec;
+  --ifm-hr-border-color: #e7e7ec;
+  --ifm-link-color: #e11d48;
+  --ifm-link-hover-color: #be123c;
+  --ifm-menu-color-active: #e11d48;
+
+  /* Radii / shadow — soft, institutional (matches frontend) */
+  --ifm-global-radius: 12px;
+  --ifm-code-border-radius: 8px;
+  --ifm-global-shadow-lw: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --ifm-global-shadow-md: 0 4px 16px rgba(16, 24, 40, 0.06), 0 2px 4px rgba(16, 24, 40, 0.04);
+
+  --docusaurus-highlighted-code-line-bg: rgba(225, 29, 72, 0.1);
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #fb7185;
+  --ifm-color-primary-dark: #f9536b;
+  --ifm-color-primary-darker: #f43f5e;
+  --ifm-color-primary-darkest: #e11d48;
+  --ifm-color-primary-light: #fc8f9e;
+  --ifm-color-primary-lighter: #fda4b0;
+  --ifm-color-primary-lightest: #fecdd3;
+
+  --ifm-background-color: #0d0d12;
+  --ifm-background-surface-color: #16161d;
+  --ifm-navbar-background-color: rgba(13, 13, 18, 0.85);
+  --ifm-heading-color: #f4f4f6;
+  --ifm-font-color-base: #e7e7ec;
+  --ifm-toc-border-color: #26262f;
+  --ifm-hr-border-color: #26262f;
+  --ifm-link-color: #fb7185;
+  --ifm-link-hover-color: #fda4b0;
+  --ifm-menu-color-active: #fb7185;
+
+  --docusaurus-highlighted-code-line-bg: rgba(251, 113, 133, 0.15);
+}
+
+/* Frosted navbar to echo the frontend .glass-header */
+.navbar {
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  box-shadow: var(--ifm-global-shadow-lw);
+}
+
+.navbar__title {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Brand-accented sidebar active item */
+.menu__link--active:not(.menu__link--sublist) {
+  font-weight: 600;
+}
+
+table {
+  display: table;
+  width: 100%;
+}
+
+/* Rounder code blocks, tabular figures in inline code (matches app .mono) */
+code {
+  font-variant-numeric: tabular-nums;
+}
+
+.footer--dark {
+  --ifm-footer-link-hover-color: #fb7185;
+}

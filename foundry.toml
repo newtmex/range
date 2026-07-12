@@ -6,6 +6,26 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 
+# ── Externalized libraries (EIP-170 size split) ────────────────────────────────
+#
+# The following library functions are `public`, so they are DEPLOYED SEPARATELY and
+# linked into their consumers via DELEGATECALL (not inlined):
+#   - VaultMath        (src/libraries/VaultMath.sol)
+#   - TickMath         (src/libraries/UniswapV3Math.sol)
+#   - LiquidityAmounts (src/libraries/UniswapV3Math.sol)
+# Consumers that require linking: RebalancerVaultUpgradeable, VaultLens, Strategy.
+#
+# `forge test` and `forge script --broadcast` auto-deploy + link these libraries, so
+# no config is required for a fresh deploy. For REPRODUCIBLE upgrades (reuse the same
+# on-chain library bytecode instead of redeploying) and for explorer verification,
+# pin the addresses emitted by the first Deploy broadcast here, e.g.:
+#
+# libraries = [
+#   "src/libraries/VaultMath.sol:VaultMath:0x...",
+#   "src/libraries/UniswapV3Math.sol:TickMath:0x...",
+#   "src/libraries/UniswapV3Math.sol:LiquidityAmounts:0x...",
+# ]
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 # ── Invariant campaign settings ────────────────────────────────────────────────

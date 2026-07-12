@@ -49,8 +49,9 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
       : undefined;
 
 
-  const totalFee0 = metrics.fees0Earned ?? events.totalFee0;
-  const totalFee1 = metrics.fees1Earned ?? events.totalFee1;
+  // Fees earned are event-sourced (on-chain counters were removed).
+  const totalFee0 = events.totalFee0;
+  const totalFee1 = events.totalFee1;
 
   const tvlMusd =
     vault.totalAssets !== undefined && price !== undefined
@@ -105,7 +106,7 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
     tvlMusd,
     feesMusd,
     sharePriceMusd,
-    rebalanceCount: metrics.rebalanceCount ?? events.rebalanceCount,
+    rebalanceCount: events.rebalanceCount,
     tickLower: metrics.tickLower ?? pool.tickLower,
     tickUpper: metrics.tickUpper ?? pool.tickUpper,
   };

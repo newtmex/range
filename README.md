@@ -13,9 +13,12 @@ Built for the [Mezo DEX Automated LP Rebalancing Vault Bounty](https://coda.io/d
 
 | Contract              | Address                                      |
 | --------------------- | -------------------------------------------- |
-| Implementation        | `0x69DE1125e5b3fbdD5e64A3F47803AF761c2e7699` |
-| CLDexAdapter          | `0x4403297D0Fbc68B5643418dEe4b2A7606A3fEb16` |
-| VaultLens             | `0x96F18Ee1aF466981C50b1E76D7604a652b451Cd0` |
+| Implementation        | `0xffb26b54a377cbBcC176166122BFD98FD04baA73` |
+| CLDexAdapter          | `0x1fF1B39569A71c98492327D36cda10126d98f45C` |
+| VaultLens             | `0x49D622d4A33045B72217ac92Ebff675A205F5b1d` |
+| VaultMath (library)   | `0xB88cFc2d3540cf67c29552407AE241B725877d02` |
+| TickMath (library)    | `0x6622361ADD251E1DB1C2DD7938E81f69b6f3Dc89` |
+| LiquidityAmounts (library) | `0x54d963052278976E980e97EB9d53304fCa7d92E6` |
 | VaultFactory          | `0x5260ead0f831040Fb14901DDAD758c0110fd3939` |
 | Strategy Tight        | `0x79f1E677C3ba8481b7f5B676EaB606AEa7dA8eD5` |
 | Strategy Medium       | `0x4f562D8e199a02363a7f4663027CdEEFfB395686` |
@@ -28,9 +31,12 @@ Built for the [Mezo DEX Automated LP Rebalancing Vault Bounty](https://coda.io/d
 
 | Contract              | Address                                      |
 | --------------------- | -------------------------------------------- |
-| Implementation        | `0x5dbcaCc96F813854DC677f028C051f7ffCD9fC0a` |
-| CLDexAdapter          | `0xfBb18Aa30E3A850C49161BE7585c79e13993ABc2` |
-| VaultLens             | `0x0AC280d086cEDC2c2633b5Cd7f57779DcF5afaF9` |
+| Implementation        | `0x733A18d8bE0476f3D9083f0b100A7C2eeF05Fd56` |
+| CLDexAdapter          | `0xDB1C7144E6cDF99C658d123f1cfa5721e8F8A322` |
+| VaultLens             | `0x8931029A12755DAA7627bB49aee600B784765160` |
+| VaultMath (library)   | `0xB88cFc2d3540cf67c29552407AE241B725877d02` |
+| TickMath (library)    | `0x6622361ADD251E1DB1C2DD7938E81f69b6f3Dc89` |
+| LiquidityAmounts (library) | `0x54d963052278976E980e97EB9d53304fCa7d92E6` |
 | VaultFactory          | `0xCbBB3309C3f91E73115Ea53f15771334ACFc6135` |
 | Strategy Tight        | `0xb29a0d5128d16aEcaFA393DFF272ea0d884dC388` |
 | Strategy Medium       | `0xc9075D7D452eca77f60A34B5838f5B4818eAEaa8` |
@@ -51,6 +57,69 @@ External DEX contracts and role addresses used for the Mezo mainnet deployment (
 | Owner            | `0x049416dE457E8a114c536e5FE379b4B290b73f3C` |
 | Operator         | `0xE962E35bc7cd42201aCaC13db05e4cF4836B5335` |
 | Guardian         | `0x017FF5FB886E90f9e5ADb405D8eFddffC1162dD2` |
+
+## Deployment & Upgrades
+
+### Externalized libraries (EIP-170)
+
+To keep `RebalancerVaultUpgradeable` under the 24,576 B runtime limit, the heavy math
+functions are compiled as `public` library functions and reached via `DELEGATECALL`
+instead of being inlined. These libraries are deployed as standalone contracts and
+**linked** into their consumers:
+
+| Library            | Source                          | Linked into                                   |
+| ------------------ | ------------------------------- | --------------------------------------------- |
+| `VaultMath`        | `src/libraries/VaultMath.sol`   | `RebalancerVaultUpgradeable`, `Strategy`      |
+| `TickMath`         | `src/libraries/UniswapV3Math.sol` | `RebalancerVaultUpgradeable`, `VaultLens`   |
+| `LiquidityAmounts` | `src/libraries/UniswapV3Math.sol` | `RebalancerVaultUpgradeable`, `VaultLens`   |
+
+`FullMath`, `OracleLib`, and the small hot helpers (`token0ToToken1`, `token1ToToken0`,
+`computeSwapMinOut`) remain `internal`/inlined. `VaultFactory` and `CLDexAdapter` need
+no linking.
+
+### Deploy
+
+`forge script` auto-deploys the three libraries as separate transactions and links them
+before deploying the dependent contracts — no manual linking step is required:
+
+```bash
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url "$RPC_URL" --broadcast -vvvv
+```
+
+After the run, capture the library addresses from
+`broadcast/Deploy.s.sol/<chainId>/run-latest.json` (the `CREATE` entries named
+`VaultMath`, `TickMath`, `LiquidityAmounts`).
+
+### Upgrade
+
+Deploying a new implementation requires the same libraries. To **reuse** the already
+deployed library bytecode (instead of redeploying it on every upgrade), pin the captured
+addresses in [`foundry.toml`](foundry.toml) under `libraries = [...]`, then run:
+
+```bash
+forge script script/Upgrade.s.sol:Upgrade \
+  --rpc-url "$RPC_URL" --broadcast -vvvv
+```
+
+Redeploy a library only when its source changes; then update the pinned address and
+relink. Because linking happens at construction time, a relinked implementation is a new
+`impl` address that the beacon `upgradeTo` points at — no storage migration is involved.
+
+### Verification
+
+Linked bytecode embeds library addresses, so explorer verification must pass them:
+
+```bash
+forge verify-contract <impl_address> \
+  src/RebalancerVaultUpgradeable.sol:RebalancerVaultUpgradeable \
+  --libraries src/libraries/VaultMath.sol:VaultMath:0x... \
+  --libraries src/libraries/UniswapV3Math.sol:TickMath:0x... \
+  --libraries src/libraries/UniswapV3Math.sol:LiquidityAmounts:0x...
+```
+
+`VaultLens` (TickMath, LiquidityAmounts) and `Strategy` (VaultMath) must be verified with
+their respective `--libraries` flags too.
 
 ## Background
 
