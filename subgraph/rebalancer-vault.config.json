@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "name": "rebalancer-vault",
+  "abis": {
+    "RebalancerVault": {
+      "path": "./abi/RebalancerVault.json"
+    }
+  },
+  "instances": [
+    {
+      "abi": "RebalancerVault",
+      "address": "0x9b29b71829597A1B705Ea1Bab1C8B2fD00088594",
+      "startBlock": 13461897,
+      "chain": "mezo-testnet"
+    },
+    {
+      "abi": "RebalancerVault",
+      "address": "0x3f92984091B71862F848452aE49943060C3Fac1A",
+      "startBlock": 13461898,
+      "chain": "mezo-testnet"
+    },
+    {
+      "abi": "RebalancerVault",
+      "address": "0x4b192b5f56fe5066a8B44dAa2376bE85073f3a3b",
+      "startBlock": 13461899,
+      "chain": "mezo-testnet"
+    }
+  ]
+}

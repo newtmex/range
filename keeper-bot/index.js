@@ -35,7 +35,7 @@ async function main() {
       const summary = watched
         .map((w) => {
           const s = vaultState[w.vault];
-          return `${w.label}=R${s.totalRebalances}/F${s.consecutiveFailures}`;
+          return `${w.label}=R${s.totalRebalances}/D${s.totalIdleDeploys}/F${s.consecutiveFailures}`;
         })
         .join(" ");
       logInfo("heartbeat", `cycle=${cycle} ${summary}`);

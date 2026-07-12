@@ -38,9 +38,6 @@ export const VAULT_LENS_ABI = [
           { name: "tvl", type: "uint256" },
           { name: "tickLower", type: "int24" },
           { name: "tickUpper", type: "int24" },
-          { name: "rebalanceCount", type: "uint256" },
-          { name: "totalFees0Earned", type: "uint256" },
-          { name: "totalFees1Earned", type: "uint256" },
         ],
       },
     ],
@@ -236,27 +233,10 @@ export const VAULT_ABI = [
     ],
     outputs: [{ name: "", type: "uint256" }],
   },
-  {
-    name: "rebalanceCount",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "totalFees0Earned",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "totalFees1Earned",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
+  // NOTE: rebalanceCount / totalFees0Earned / totalFees1Earned getters were
+  // removed on-chain. These analytics are now derived from Rebalanced /
+  // FeesCollected event logs (see useVaultEvents), with getVaultMetrics no
+  // longer returning them.
   // ── Events ─────────────────────────────────────────────────────────────────
   {
     name: "Deposit",

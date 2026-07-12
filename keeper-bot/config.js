@@ -7,9 +7,13 @@ import { logErr } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const {PRIVATE_KEY,RPC_URL,WS_URL,POLL_INTERVAL_MS = "30000", MAX_GAS_GWEI = "50", LENS_ADDRESS} = process.env;
+export const {PRIVATE_KEY,RPC_URL,WS_URL,POLL_INTERVAL_MS = "30000", MAX_GAS_GWEI = "50", LENS_ADDRESS, IDLE_DEPLOY_BPS = "2000"} = process.env;
 
 export const MAX_GAS_PRICE = ethers.parseUnits(MAX_GAS_GWEI, "gwei");
+
+// Deploy idle balances into the live position once idle value (in token0 terms)
+// exceeds this share of totalAssets. Default 2000 bps = 20%.
+export const IDLE_DEPLOY_THRESHOLD_BPS = BigInt(IDLE_DEPLOY_BPS);
 
 if (!PRIVATE_KEY || !RPC_URL) {
   logErr("boot", "Missing required env vars: PRIVATE_KEY and RPC_URL must be set.");

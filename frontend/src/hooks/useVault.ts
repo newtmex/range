@@ -138,14 +138,14 @@ export function useVaultMetrics(
     query: { enabled: initialized, refetchInterval: 15_000 },
   });
 
+  // rebalanceCount / totalFees0Earned / totalFees1Earned were removed from the
+  // on-chain getVaultMetrics; those analytics are now derived from event logs
+  // (see useVaultEvents). This hook only surfaces the live on-chain metrics.
   const data = result.data as
     | {
         tvl: bigint;
         tickLower: number;
         tickUpper: number;
-        rebalanceCount: bigint;
-        totalFees0Earned: bigint;
-        totalFees1Earned: bigint;
       }
     | undefined;
 
@@ -153,9 +153,6 @@ export function useVaultMetrics(
     tvl: data?.tvl,
     tickLower: data?.tickLower,
     tickUpper: data?.tickUpper,
-    rebalanceCount: data?.rebalanceCount,
-    fees0Earned: data?.totalFees0Earned,
-    fees1Earned: data?.totalFees1Earned,
     isLoading: result.isLoading,
   };
 }
