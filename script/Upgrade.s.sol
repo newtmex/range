@@ -10,13 +10,23 @@ import {VaultFactory} from "../src/factory/VaultFactory.sol";
 
 contract Upgrade is Script {
     function run() external returns (address newImpl) {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address factoryAddr = vm.envAddress("FACTORY_ADDRESS");
 
         VaultFactory factory = VaultFactory(factoryAddr);
         address oldImpl = factory.implementation();
 
-        vm.startBroadcast(deployerKey);
+        // Signer selection:
+        //   - Hardware wallet (mainnet owner): set USE_HW_WALLET=true and pass the wallet
+        //     flag + sender on the CLI, e.g. `--trezor --sender <OWNER_ADDRESS>`
+        //     (or `--ledger --sender <OWNER_ADDRESS>`). No PRIVATE_KEY needed.
+        //   - Hot key (testnet): leave USE_HW_WALLET unset; PRIVATE_KEY (0x-prefixed) is used.
+        // `upgradeTo` is onlyOwner on the beacon, so the broadcasting signer MUST be the
+        // factory owner.
+        if (vm.envOr("USE_HW_WALLET", false)) {
+            vm.startBroadcast();
+        } else {
+            vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
+        }
         RebalancerVaultUpgradeable impl = new RebalancerVaultUpgradeable();
         factory.upgradeTo(address(impl));
         vm.stopBroadcast();

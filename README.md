@@ -31,9 +31,12 @@ Built for the [Mezo DEX Automated LP Rebalancing Vault Bounty](https://coda.io/d
 
 | Contract              | Address                                      |
 | --------------------- | -------------------------------------------- |
-| Implementation        | `0x5dbcaCc96F813854DC677f028C051f7ffCD9fC0a` |
-| CLDexAdapter          | `0xfBb18Aa30E3A850C49161BE7585c79e13993ABc2` |
-| VaultLens             | `0x0AC280d086cEDC2c2633b5Cd7f57779DcF5afaF9` |
+| Implementation        | `0x733A18d8bE0476f3D9083f0b100A7C2eeF05Fd56` |
+| CLDexAdapter          | `0xDB1C7144E6cDF99C658d123f1cfa5721e8F8A322` |
+| VaultLens             | `0x8931029A12755DAA7627bB49aee600B784765160` |
+| VaultMath (library)   | `0xB88cFc2d3540cf67c29552407AE241B725877d02` |
+| TickMath (library)    | `0x6622361ADD251E1DB1C2DD7938E81f69b6f3Dc89` |
+| LiquidityAmounts (library) | `0x54d963052278976E980e97EB9d53304fCa7d92E6` |
 | VaultFactory          | `0xCbBB3309C3f91E73115Ea53f15771334ACFc6135` |
 | Strategy Tight        | `0xb29a0d5128d16aEcaFA393DFF272ea0d884dC388` |
 | Strategy Medium       | `0xc9075D7D452eca77f60A34B5838f5B4818eAEaa8` |
