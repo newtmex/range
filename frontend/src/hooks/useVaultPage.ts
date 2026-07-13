@@ -35,6 +35,7 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
     vault.decimals1,
   );
   const events = useVaultEvents(vaultAddress);
+  const vaultApy = useVaultApy(vaultAddress, chainId, events.firstEventTimestamp);
 
   console.log(vault, pool, metrics, tokens, user, events, "vault page data");
   const sym0 = tokens.symbol0 ?? "TOKEN0";
@@ -81,14 +82,11 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
         )
       : undefined;
 
-  const apy = useVaultApy(
-    vaultAddress,
-    chainId,
-    events.firstEventTimestamp,
-    d0,
-    d1,
-    isToken0Musd,
-  );
+  // Trailing share-price APY (vaults.fyi methodology, TVL-weighted). Collapse
+  // the three windows into the single figure VaultStats renders, preferring the
+  // most stable window that's actually available — longer windows need archive
+  // history that public RPCs may have pruned, so fall back toward the 1d window.
+  const apy = vaultApy.apy30d ?? vaultApy.apy7d ?? vaultApy.apy1d;
 
   return {
     isConnected,
