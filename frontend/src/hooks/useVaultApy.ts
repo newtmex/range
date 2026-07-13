@@ -94,6 +94,7 @@ export interface VaultApy {
   /** Trailing 30-day APY, in percent. Most stable, slowest to react. */
   apy30d: number | undefined;
   isLoading: boolean;
+  isError: boolean;
 }
 
 const EMPTY_APY: VaultApy = {
@@ -101,7 +102,15 @@ const EMPTY_APY: VaultApy = {
   apy7d: undefined,
   apy30d: undefined,
   isLoading: false,
+  isError: false,
 };
+
+/** True once any window has produced a figure we can keep showing. */
+function hasAnyApy(r: VaultApy): boolean {
+  return (
+    r.apy1d !== undefined || r.apy7d !== undefined || r.apy30d !== undefined
+  );
+}
 
 /**
  * Runs `worker` over `items` with at most `limit` in flight at once, preserving
@@ -315,6 +324,13 @@ export function useVaultApy(
   vaultAddress: `0x${string}`,
   chainId: number | undefined,
   firstEventTimestamp: number | undefined,
+  // APY is anchored to the vault's first activity, which useVaultEvents derives
+  // from the subgraph — so this hook can't distinguish "no first event yet
+  // because events are still loading" from "no first event because the vault
+  // has never been touched" on its own. Passing the upstream status in keeps it
+  // from reporting a settled, empty APY while events are still in flight.
+  eventsLoading: boolean,
+  eventsError: boolean,
 ): VaultApy {
   const client = usePublicClient();
   // Dedicated archive client for historical state reads. Falls back to the live
@@ -381,12 +397,27 @@ export function useVaultApy(
   );
 
   const fetchApy = useCallback(async () => {
-    if (!client || firstEventTimestamp === undefined) {
+    // Still waiting on the upstream that tells us where history begins.
+    if (eventsLoading || !client) {
+      setResult((prev) => ({ ...prev, isLoading: !hasAnyApy(prev) }));
+      return;
+    }
+    if (eventsError) {
+      setResult((prev) => ({ ...prev, isLoading: false, isError: true }));
+      return;
+    }
+    // Events resolved and the vault has never been touched: there is no
+    // share-price history to annualize. That's an empty result, not a failure
+    // and not a perpetual spinner.
+    if (firstEventTimestamp === undefined) {
       setResult({ ...EMPTY_APY });
       return;
     }
 
-    setResult((prev) => ({ ...prev, isLoading: true }));
+    // Only skeleton on the first computation. Once a figure is on screen a
+    // recompute keeps it there, so the tile doesn't flash back to a placeholder
+    // every time the deps change.
+    setResult((prev) => ({ ...prev, isLoading: !hasAnyApy(prev) }));
     try {
       const lensAddress = getVaultLensAddress(chainId);
       const latest = await client.getBlockNumber();
@@ -409,7 +440,7 @@ export function useVaultApy(
         ),
       );
 
-      const next: VaultApy = { ...EMPTY_APY, isLoading: false };
+      const next: VaultApy = { ...EMPTY_APY, isLoading: false, isError: false };
       keys.forEach((k, i) => {
         const r = settled[i];
         next[k] = r.status === "fulfilled" ? r.value : undefined;
@@ -417,9 +448,18 @@ export function useVaultApy(
       setResult(next);
     } catch (e) {
       console.error("useVaultApy:", e);
-      setResult({ ...EMPTY_APY });
+      // Keep any figure we already computed rather than blanking the tile.
+      setResult((prev) => ({ ...prev, isLoading: false, isError: true }));
     }
-  }, [client, archiveClient, chainId, firstEventTimestamp, computeWindow]);
+  }, [
+    client,
+    archiveClient,
+    chainId,
+    firstEventTimestamp,
+    eventsLoading,
+    eventsError,
+    computeWindow,
+  ]);
 
   useEffect(() => {
     fetchApy();

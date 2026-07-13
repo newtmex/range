@@ -17,6 +17,8 @@ import {
   toMusdFromToken0,
   combineFeesToMusd,
 } from "@/lib/utils";
+import { combine, resolveStat, type AsyncSource } from "@/lib/async";
+import type { VaultStatsData } from "@/components/VaultStats";
 
 export function useVaultPage(vaultAddress: `0x${string}`) {
   const { isConnected } = useAccount();
@@ -35,9 +37,14 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
     vault.decimals1,
   );
   const events = useVaultEvents(vaultAddress);
-  const vaultApy = useVaultApy(vaultAddress, chainId, events.firstEventTimestamp);
+  const vaultApy = useVaultApy(
+    vaultAddress,
+    chainId,
+    events.firstEventTimestamp,
+    events.isLoading,
+    events.isError,
+  );
 
-  console.log(vault, pool, metrics, tokens, user, events, "vault page data");
   const sym0 = tokens.symbol0 ?? "TOKEN0";
   const sym1 = tokens.symbol1 ?? "TOKEN1";
   const d0 = vault.decimals0 ?? 18;
@@ -88,7 +95,51 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
   // history that public RPCs may have pruned, so fall back toward the 1d window.
   const apy = vaultApy.apy30d ?? vaultApy.apy7d ?? vaultApy.apy1d;
 
+  const tickLower = metrics.tickLower ?? pool.tickLower;
+  const tickUpper = metrics.tickUpper ?? pool.tickUpper;
+
+  // Each stat waits on exactly the sources it is derived from, so a slow source
+  // can't drag a settled stat back to a skeleton and a fast one can't push an
+  // unsettled stat into rendering a fallback. `price` (and therefore every
+  // MUSD-denominated figure) comes from the pool, which is itself gated on the
+  // vault — hence the vault source appears in those combines too.
+  const vaultSrc: AsyncSource = { isLoading: vault.isLoading, isError: vault.isError };
+  const poolSrc: AsyncSource = combine(vaultSrc, {
+    isLoading: pool.isLoading,
+    isError: pool.isError,
+  });
+  const metricsSrc: AsyncSource = combine(vaultSrc, {
+    isLoading: metrics.isLoading,
+    isError: metrics.isError,
+  });
+  const tokensSrc: AsyncSource = combine(vaultSrc, {
+    isLoading: tokens.isLoading,
+    isError: tokens.isError,
+  });
+  const eventsSrc: AsyncSource = { isLoading: events.isLoading, isError: events.isError };
+  const apySrc: AsyncSource = { isLoading: vaultApy.isLoading, isError: vaultApy.isError };
+
+  // The MUSD figures are only meaningful once the symbols identify which token
+  // is MUSD, so they wait on tokens as well as on the numbers themselves.
+  const musdSrc = combine(poolSrc, tokensSrc);
+
+  const stats: VaultStatsData = {
+    tvl: resolveStat(musdSrc, () => tvlMusd),
+    apy: resolveStat(apySrc, () => apy),
+    fees: resolveStat(combine(musdSrc, eventsSrc), () => feesMusd),
+    paused: resolveStat(vaultSrc, () => vault.paused),
+    sharePrice: resolveStat(musdSrc, () => sharePriceMusd),
+    rebalanceCount: resolveStat(eventsSrc, () => events.rebalanceCount),
+    performanceFeeBps: resolveStat(vaultSrc, () => vault.performanceFeeBps),
+    range: resolveStat(combine(metricsSrc, poolSrc), () =>
+      tickLower !== undefined && tickUpper !== undefined
+        ? { lower: tickLower, upper: tickUpper }
+        : undefined,
+    ),
+  };
+
   return {
+    stats,
     isConnected,
     sym0,
     sym1,
@@ -105,7 +156,7 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
     feesMusd,
     sharePriceMusd,
     rebalanceCount: events.rebalanceCount,
-    tickLower: metrics.tickLower ?? pool.tickLower,
-    tickUpper: metrics.tickUpper ?? pool.tickUpper,
+    tickLower,
+    tickUpper,
   };
 }

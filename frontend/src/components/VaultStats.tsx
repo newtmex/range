@@ -1,28 +1,53 @@
 "use client";
 
 import { formatDisplayNumber, formatBps } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { hasValue, type AsyncStat } from "@/lib/async";
 
-interface VaultStatsProps {
-  tvlMusd?: number;
-  sharePriceMusd?: number;
-  feesMusd?: number;
-  symMusd?: string;
-  performanceFeeBps?: bigint;
-  paused?: boolean;
-  isLoading: boolean;
-  apy?: number;
-  rebalanceCount?: bigint | number;
-  tickLower?: number;
-  tickUpper?: number;
+/**
+ * One status per stat, because they come from five sources that settle at very
+ * different speeds. A single page-wide flag would let the tiles still in flight
+ * render a fallback the moment the fastest source landed.
+ */
+export interface VaultStatsData {
+  tvl: AsyncStat<number>;
+  apy: AsyncStat<number>;
+  fees: AsyncStat<number>;
+  paused: AsyncStat<boolean>;
+  range: AsyncStat<{ lower: number; upper: number }>;
+  sharePrice: AsyncStat<number>;
+  rebalanceCount: AsyncStat<number>;
+  performanceFeeBps: AsyncStat<bigint>;
 }
 
-function Skeleton() {
+interface VaultStatsProps {
+  stats: VaultStatsData;
+  symMusd?: string;
+}
+
+/** Shown when a stat's fetch failed and there is no last-known value to fall back on. */
+function Unavailable() {
   return (
-    <span
-      className="inline-block h-5 w-20 rounded-md"
-      style={{ background: "var(--surface)", animation: "pulse 1.5s ease-in-out infinite" }}
-    />
+    <span className="text-[13px] font-medium" style={{ color: "var(--error)" }}>
+      Unavailable
+    </span>
   );
+}
+
+/**
+ * Renders a stat according to its own status: a skeleton while it is loading,
+ * an error marker if it failed with nothing to show, a dash if it resolved to
+ * genuinely no data, and the formatted value otherwise. `render` only ever runs
+ * on a real value, so no tile can print a default or a fallback.
+ */
+function renderStat<T>(
+  stat: AsyncStat<T>,
+  render: (value: T) => React.ReactNode,
+): React.ReactNode {
+  if (stat.status === "loading") return <Skeleton />;
+  if (stat.status === "error") return <Unavailable />;
+  if (stat.value === undefined) return "—";
+  return render(stat.value);
 }
 
 function Stat({
@@ -47,45 +72,33 @@ function Stat({
   );
 }
 
-export function VaultStats({
-  tvlMusd,
-  sharePriceMusd,
-  feesMusd,
-  symMusd = "MUSD",
-  performanceFeeBps,
-  paused,
-  isLoading,
-  apy,
-  rebalanceCount,
-  tickLower,
-  tickUpper,
-}: VaultStatsProps) {
+export function VaultStats({ stats, symMusd = "MUSD" }: VaultStatsProps) {
   const tiles: { label: string; value: React.ReactNode; highlight?: boolean }[] = [
     {
       label: "TVL",
-      value:
-        tvlMusd !== undefined
-          ? `${formatDisplayNumber(tvlMusd, 6)} ${symMusd}`
-          : "—",
+      value: renderStat(
+        stats.tvl,
+        (tvl) => `${formatDisplayNumber(tvl, 6)} ${symMusd}`,
+      ),
     },
     {
       label: "APY",
-      value: apy !== undefined ? `${apy.toFixed(2)}%` : "—",
-      highlight: apy !== undefined,
+      value: renderStat(stats.apy, (apy) => `${apy.toFixed(2)}%`),
+      // Only tint the tile red once it actually holds a figure — a skeleton or
+      // an error marker shouldn't be styled as if it were a yield.
+      highlight: hasValue(stats.apy),
     },
     {
       label: "Fees Earned",
-      value:
-        feesMusd !== undefined
-          ? `${formatDisplayNumber(feesMusd, 6)} ${symMusd}`
-          : "—",
+      value: renderStat(
+        stats.fees,
+        (fees) => `${formatDisplayNumber(fees, 6)} ${symMusd}`,
+      ),
     },
     {
       label: "Status",
-      value:
-        paused === undefined ? (
-          "—"
-        ) : paused ? (
+      value: renderStat(stats.paused, (paused) =>
+        paused ? (
           <span style={{ color: "var(--error)" }}>Paused</span>
         ) : (
           <span className="flex items-center gap-1.5" style={{ color: "var(--green)" }}>
@@ -96,28 +109,26 @@ export function VaultStats({
             Active
           </span>
         ),
+      ),
     },
     {
       label: "Range",
-      value:
-        tickLower !== undefined && tickUpper !== undefined
-          ? `${tickLower} / ${tickUpper}`
-          : "—",
+      value: renderStat(stats.range, (r) => `${r.lower} / ${r.upper}`),
     },
     {
       label: "Share Price",
-      value:
-        sharePriceMusd !== undefined
-          ? `${formatDisplayNumber(sharePriceMusd, 8)} ${symMusd}`
-          : "—",
+      value: renderStat(
+        stats.sharePrice,
+        (price) => `${formatDisplayNumber(price, 8)} ${symMusd}`,
+      ),
     },
     {
       label: "Rebalances",
-      value: rebalanceCount !== undefined ? String(rebalanceCount) : "—",
+      value: renderStat(stats.rebalanceCount, (count) => String(count)),
     },
     {
       label: "Perf Fee",
-      value: performanceFeeBps !== undefined ? formatBps(performanceFeeBps) : "—",
+      value: renderStat(stats.performanceFeeBps, (bps) => formatBps(bps)),
     },
   ];
 
@@ -127,13 +138,9 @@ export function VaultStats({
         className="grid grid-cols-2 sm:grid-cols-4"
         style={{ gap: 1, background: "var(--border-2)" }}
       >
-        {tiles.map((t, i) => (
-          <div key={i} style={{ background: "var(--surface-2)" }}>
-            <Stat
-              label={t.label}
-              highlight={t.highlight}
-              value={isLoading ? <Skeleton /> : t.value}
-            />
+        {tiles.map((t) => (
+          <div key={t.label} style={{ background: "var(--surface-2)" }}>
+            <Stat label={t.label} highlight={t.highlight} value={t.value} />
           </div>
         ))}
       </div>

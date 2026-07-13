@@ -45,13 +45,16 @@ export function useVaultState(vaultAddress: `0x${string}`) {
 
   const data = results.data;
 
-  console.log(data, "vault state data");
-
   const tokenId = data?.[6]?.result as bigint | undefined;
   const initialized = tokenId !== undefined && tokenId !== BigInt(0);
 
   return {
-    isLoading: results.isLoading,
+    // "We expect data and don't have it yet" rather than the query's own
+    // isLoading: a query that has been enabled but hasn't started fetching
+    // reports isLoading:false for a frame, which is long enough for the stats
+    // fed from here to flash their empty state before the first result lands.
+    isLoading: data === undefined && !results.isError,
+    isError: results.isError,
     vaultSymbol: (data?.[0]?.result as string | undefined) ?? "mREBAL",
     totalAssets: data?.[1]?.result as bigint | undefined,
     totalSupply: data?.[2]?.result as bigint | undefined,
@@ -112,6 +115,8 @@ export function usePoolState(
       }
     | undefined;
 
+  const isError = poolState.isError || position.isError || outOfRange.isError;
+
   return {
     sqrtPriceX96: poolData?.[0],
     currentTick: poolData?.[1],
@@ -119,7 +124,15 @@ export function usePoolState(
     tickUpper: posData?.tickUpper,
     liquidity: posData?.liquidity,
     isOutOfRange: outOfRange.data as boolean | undefined,
-    isLoading: poolState.isLoading || position.isLoading,
+    // These reads are gated on `initialized`, which the vault multicall has to
+    // resolve first — so "loading" here means "the vault has a position and we
+    // haven't read it yet". When the vault turns out to be uninitialized the
+    // queries never run, and the stats fed from here correctly settle empty
+    // rather than spinning forever. Callers must additionally fold in the
+    // vault's own loading state, since until that resolves we don't yet know
+    // whether to expect a position at all.
+    isLoading: initialized && !isError && (!poolData || !posData),
+    isError,
   };
 }
 
@@ -153,7 +166,9 @@ export function useVaultMetrics(
     tvl: data?.tvl,
     tickLower: data?.tickLower,
     tickUpper: data?.tickUpper,
-    isLoading: result.isLoading,
+    // Same `initialized` gate as usePoolState — see the note there.
+    isLoading: initialized && data === undefined && !result.isError,
+    isError: result.isError,
   };
 }
 
@@ -161,17 +176,26 @@ export function useTokenInfo(
   token0Address: `0x${string}` | undefined,
   token1Address: `0x${string}` | undefined,
 ) {
+  const enabled = !!(token0Address && token1Address);
+
   const results = useReadContracts({
     contracts: [
       { address: token0Address, abi: ERC20_ABI, functionName: "symbol" },
       { address: token1Address, abi: ERC20_ABI, functionName: "symbol" },
     ],
-    query: { enabled: !!(token0Address && token1Address) },
+    query: { enabled },
   });
 
   return {
     symbol0: results.data?.[0]?.result as string | undefined,
     symbol1: results.data?.[1]?.result as string | undefined,
+    // Which of the two tokens is MUSD is inferred from symbol0, and until that
+    // arrives isMusdToken0() falls back to a chain-based guess. Any stat printed
+    // in MUSD therefore has to treat the symbols as a source it waits on —
+    // otherwise a wrong guess renders a real number under the wrong
+    // denomination, then silently flips once the symbols land.
+    isLoading: enabled && results.data === undefined && !results.isError,
+    isError: results.isError,
   };
 }
 

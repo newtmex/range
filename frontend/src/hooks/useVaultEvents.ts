@@ -63,11 +63,17 @@ export interface RebalanceEvent {
 
 export interface VaultEventsData {
   rebalances: RebalanceEvent[];
-  rebalanceCount: number;
-  totalFee0: bigint;
-  totalFee1: bigint;
+  // Undefined until the first successful fetch. These used to be seeded with
+  // 0 / 0n, which is indistinguishable from a genuine "this vault has never
+  // rebalanced and earned no fees" — so the stats rendered a confident 0 before
+  // anything had been fetched. A zero is only truthful once it comes back from
+  // the subgraph.
+  rebalanceCount: number | undefined;
+  totalFee0: bigint | undefined;
+  totalFee1: bigint | undefined;
   firstEventTimestamp: number | undefined;
   isLoading: boolean;
+  isError: boolean;
 }
 
 // ── Raw GraphQL response shapes (metadata fields come back as strings) ────────
@@ -95,13 +101,14 @@ interface VaultEventsResponse {
   firstWithdraw: RawTs[];
 }
 
-const EMPTY: VaultEventsData = {
+const INITIAL: VaultEventsData = {
   rebalances: [],
-  rebalanceCount: 0,
-  totalFee0: BigInt(0),
-  totalFee1: BigInt(0),
+  rebalanceCount: undefined,
+  totalFee0: undefined,
+  totalFee1: undefined,
   firstEventTimestamp: undefined,
-  isLoading: false,
+  isLoading: true,
+  isError: false,
 };
 
 function earliest(...groups: RawTs[][]): number | undefined {
@@ -116,7 +123,7 @@ export function useVaultEvents(vaultAddress: `0x${string}`): VaultEventsData {
   const chainId = useChainId();
   const subgraphUrl = SUBGRAPH_URLS[chainId];
 
-  const [data, setData] = useState<VaultEventsData>({ ...EMPTY, isLoading: true });
+  const [data, setData] = useState<VaultEventsData>(INITIAL);
 
   // Prevents overlapping polls from racing (a slow request shouldn't stack).
   const inFlight = useRef(false);
@@ -127,7 +134,9 @@ export function useVaultEvents(vaultAddress: `0x${string}`): VaultEventsData {
         `useVaultEvents: no subgraph URL configured for chain ${chainId} ` +
           "(set NEXT_PUBLIC_SUBGRAPH_URL_TESTNET / _MAINNET)",
       );
-      setData({ ...EMPTY });
+      // A missing endpoint means we cannot know the event-derived stats — that
+      // is an error, not "this vault has no events".
+      setData({ ...INITIAL, isLoading: false, isError: true });
       return;
     }
     if (inFlight.current) return;
@@ -174,10 +183,15 @@ export function useVaultEvents(vaultAddress: `0x${string}`): VaultEventsData {
           d.firstWithdraw,
         ),
         isLoading: false,
+        // A successful poll clears an error left by a previous one.
+        isError: false,
       });
     } catch (e) {
       console.error("useVaultEvents:", e);
-      setData((prev) => ({ ...prev, isLoading: false }));
+      // Keep whatever we last fetched: a failed background poll shouldn't wipe
+      // good values off the screen. isError only surfaces in the UI for stats
+      // that have no value to fall back on.
+      setData((prev) => ({ ...prev, isLoading: false, isError: true }));
     } finally {
       inFlight.current = false;
     }

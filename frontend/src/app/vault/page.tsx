@@ -45,13 +45,7 @@ function VaultPageContent() {
     pool,
     user,
     events,
-    apy,
-    tvlMusd,
-    feesMusd,
-    sharePriceMusd,
-    rebalanceCount,
-    tickLower,
-    tickUpper,
+    stats,
   } = useVaultPage(vaultAddress);
 
   const handleStrategySelect = useCallback(
@@ -85,19 +79,7 @@ function VaultPageContent() {
         />
 
         {/* Stats — full width */}
-        <VaultStats
-          tvlMusd={tvlMusd}
-          sharePriceMusd={sharePriceMusd}
-          feesMusd={feesMusd}
-          symMusd={symMusd}
-          performanceFeeBps={vault.performanceFeeBps}
-          paused={vault.paused}
-          isLoading={vault.isLoading}
-          apy={apy}
-          rebalanceCount={rebalanceCount}
-          tickLower={tickLower}
-          tickUpper={tickUpper}
-        />
+        <VaultStats stats={stats} symMusd={symMusd} />
 
         {/* 2-column layout */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 items-start">
