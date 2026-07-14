@@ -38,6 +38,8 @@ function VaultPageContent() {
     sym0,
     sym1,
     symMusd,
+    price,
+    isToken0Musd,
     vaultSymbol,
     d0,
     d1,
@@ -102,6 +104,9 @@ function VaultPageContent() {
               allowance1={user.allowance1}
               maxRedeem={user.maxRedeem}
               isConnected={isConnected}
+              price={price}
+              isToken0Musd={isToken0Musd}
+              symMusd={symMusd}
             />
             <PriceRangeCard
               initialized={vault.initialized}

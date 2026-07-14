@@ -10,7 +10,11 @@ import {
   ArrowUpRight,
   X,
 } from "lucide-react";
-import { formatTokenAmount } from "@/lib/utils";
+import {
+  formatTokenAmount,
+  formatDisplayNumber,
+  toMusdFromToken0,
+} from "@/lib/utils";
 import {
   useVaultActions,
   type Tab,
@@ -34,6 +38,10 @@ interface Props {
   allowance1?: bigint;
   maxRedeem?: bigint;
   isConnected: boolean;
+  /** Pool spot price (token1 per token0, human units) for the MUSD-equivalent preview. */
+  price?: number;
+  isToken0Musd?: boolean;
+  symMusd?: string;
 }
 
 export function DepositWithdraw({
@@ -53,6 +61,9 @@ export function DepositWithdraw({
   allowance1,
   maxRedeem,
   isConnected,
+  price,
+  isToken0Musd,
+  symMusd = "MUSD",
 }: Props) {
   const [tab, setTab] = useState<Tab>("deposit");
   const [depositToken, setDepositToken] = useState<DepositToken>("token0");
@@ -88,6 +99,23 @@ export function DepositWithdraw({
     isConnected,
     maxAmount,
   });
+
+  // MUSD equivalent of the withdraw preview, spot-price estimated. Skipped when
+  // token0 is already MUSD (the primary line reads in MUSD), when the pool
+  // price hasn't loaded, or while isToken0Musd is still undefined (token roles
+  // aren't known until the symbols load).
+  const previewMusd =
+    tab === "withdraw" &&
+    isToken0Musd === false &&
+    actions.previewResult !== undefined &&
+    price !== undefined &&
+    price > 0
+      ? toMusdFromToken0(
+          parseFloat(formatUnits(actions.previewResult, decimals0)),
+          price,
+          false,
+        )
+      : undefined;
 
   function switchTab(t: Tab) {
     setTab(t);
@@ -254,9 +282,16 @@ export function DepositWithdraw({
             style={{ background: "var(--surface)" }}
           >
             <span className="label">You receive</span>
-            <span className="mono text-sm font-semibold" style={{ color: "var(--text)" }}>
-              {formatTokenAmount(actions.previewResult, decimals0, 8)}{" "}
-              {actions.previewSuffix}
+            <span className="text-right">
+              <span className="mono block text-sm font-semibold" style={{ color: "var(--text)" }}>
+                {formatTokenAmount(actions.previewResult, decimals0, 8)}{" "}
+                {actions.previewSuffix}
+              </span>
+              {previewMusd !== undefined && (
+                <span className="mono block text-xs mt-0.5" style={{ color: "var(--text-3)" }}>
+                  ≈ {formatDisplayNumber(previewMusd, 2)} {symMusd}
+                </span>
+              )}
             </span>
           </div>
         )}

@@ -144,6 +144,11 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
     sym0,
     sym1,
     symMusd,
+    price,
+    // Undefined until the token symbols identify which token is MUSD — see the
+    // note in useTokenInfo. Consumers gate MUSD rendering on this being set,
+    // so a chain-based guess never prints a number under the wrong denomination.
+    isToken0Musd: tokens.symbol0 !== undefined ? isToken0Musd : undefined,
     vaultSymbol: vault.vaultSymbol,
     d0,
     d1,
