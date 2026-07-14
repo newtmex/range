@@ -4,7 +4,6 @@ pragma solidity ^0.8.13;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LiquidityAmounts, TickMath} from "./libraries/UniswapV3Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 import {OracleLib} from "./libraries/OracleLib.sol";
 import {IDexAdapter} from "./adapters/interfaces/IDexAdapter.sol";
 import {IStrategy} from "./strategies/interfaces/IStrategy.sol";
@@ -123,8 +122,15 @@ contract VaultLens {
         address adapter = v.dexAdapter();
         address poolAddr = v.pool();
 
-        (int24 lo, int24 hi, uint128 liq, , , address token0, address token1) =
-            _positions(v, tid);
+        (
+            int24 lo,
+            int24 hi,
+            uint128 liq,
+            ,
+            ,
+            address token0,
+            address token1
+        ) = _positions(v, tid);
         (uint160 sqrtPriceX96, ) = IDexAdapter(adapter).slot0(poolAddr);
 
         (uint256 amount0, uint256 amount1) = LiquidityAmounts
@@ -145,7 +151,10 @@ contract VaultLens {
         int24 twapTick = OracleLib.getTwapTick(poolAddr, v.twapSeconds());
         int24 spacing = IDexAdapter(adapter).tickSpacing(poolAddr);
         address strat = v.strategy();
-        (int24 rLo, int24 rHi) = IStrategy(strat).computeRange(twapTick, spacing);
+        (int24 rLo, int24 rHi) = IStrategy(strat).computeRange(
+            twapTick,
+            spacing
+        );
 
         return
             IStrategy(strat).computeOptimalSwap(
@@ -171,8 +180,10 @@ contract VaultLens {
         address adapter = v.dexAdapter();
         address poolAddr = v.pool();
 
-        (int24 lo, int24 hi, , , , address token0, address token1) =
-            _positions(v, tid);
+        (int24 lo, int24 hi, , , , address token0, address token1) = _positions(
+            v,
+            tid
+        );
         (uint160 sqrtPriceX96, ) = IDexAdapter(adapter).slot0(poolAddr);
 
         return
@@ -204,6 +215,9 @@ contract VaultLens {
         )
     {
         return
-            IDexAdapter(v.dexAdapter()).positions(v.positionManager(), tokenId_);
+            IDexAdapter(v.dexAdapter()).positions(
+                v.positionManager(),
+                tokenId_
+            );
     }
 }

@@ -448,7 +448,6 @@ contract RebalancerVaultUpgradeable is
         uint256 idleBefore0 = IERC20(s.token0).balanceOf(address(this));
         uint256 idleBefore1 = IERC20(s.token1).balanceOf(address(this));
 
-
         //Principal removed
         (uint256 p0, uint256 p1) = _removeProportionalLiquidity(
             shares,
@@ -466,13 +465,13 @@ contract RebalancerVaultUpgradeable is
             idleBefore0;
         uint256 swept1 = IERC20(s.token1).balanceOf(address(this)) -
             idleBefore1;
-         //p0= principal+ all accrued fees 
-         //_deductPerformanceFee only removes the proportional fees
+        //p0= principal+ all accrued fees
+        //_deductPerformanceFee only removes the proportional fees
         (uint256 fee0, uint256 fee1) = _deductPerformanceFee(
             swept0 - p0,
             swept1 - p1
         );
-        
+
         if (fee0 > 0 || fee1 > 0)
             emit FeesCollected(fee0, fee1, s.feeRecipient);
 
@@ -481,11 +480,16 @@ contract RebalancerVaultUpgradeable is
         uint256 idle0 = IERC20(s.token0).balanceOf(address(this));
         if (idle0 < assets) {
             uint256 shortfall = assets - idle0;
-                        // gross up the input so realized token0 out covers the shortfall
-           uint256 token1Needed = VaultMath.token0ToToken1(
-               Math.mulDiv(shortfall, 10_000, 10_000 - s.slippageBps, Math.Rounding.Ceil),
-              OracleLib.getTwapSqrtPrice(s.pool, s.twapSeconds)
-          );
+            // gross up the input so realized token0 out covers the shortfall
+            uint256 token1Needed = VaultMath.token0ToToken1(
+                Math.mulDiv(
+                    shortfall,
+                    10_000,
+                    10_000 - s.slippageBps,
+                    Math.Rounding.Ceil
+                ),
+                OracleLib.getTwapSqrtPrice(s.pool, s.twapSeconds)
+            );
 
             uint256 available1 = IERC20(s.token1).balanceOf(address(this));
             if (token1Needed > available1) token1Needed = available1;
@@ -640,7 +644,11 @@ contract RebalancerVaultUpgradeable is
         );
         if (depositValToken0 == 0) revert ZeroAmount();
 
-        shares = _seedAndComputeShares(depositValToken0, supply, totalValBefore);
+        shares = _seedAndComputeShares(
+            depositValToken0,
+            supply,
+            totalValBefore
+        );
         _mint(receiver, shares);
         emit Token1Deposited(msg.sender, receiver, token1Amount, shares);
     }

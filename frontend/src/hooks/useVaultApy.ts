@@ -9,33 +9,50 @@ import {
 } from "@/lib/contracts";
 import { getArchiveClient } from "@/config/wagmi";
 import { findBlockAtTimestamp } from "@/lib/blockSearch";
+import { isMusdToken0 } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// vaults.fyi APY methodology
+// APY methodology (vaults.fyi share-price method, MUSD-denominated)
 // ─────────────────────────────────────────────────────────────────────────────
 // APY is derived from the change in a vault's *share price* across fixed
 // trailing windows (1d / 7d / 30d), read directly from onchain contracts —
 // never from an instantaneous or self-reported rate.
 //
-//   share price      = total shares value / total shares
-//   interest rate    = (current share price / previous share price) - 1
+// The onchain share price (VaultLens.sharePrice) is denominated in token0 —
+// BTC on mainnet. In BTC terms a ~50%-MUSD LP position loses value whenever
+// BTC rallies, so a BTC-denominated APY tracks market direction more than
+// yield (and contradicts the MUSD-denominated TVL shown alongside it). We
+// therefore re-denominate every observation into MUSD using the pool price at
+// that same block:
 //
-// To keep large TVL swings from over/under-stating yield, each pairwise ratio
-// is weighted by the smaller (more conservative) TVL of the two observations:
+//   share price (MUSD) = share price (token0) · pool price   (token0 ≠ MUSD)
+//   share price (MUSD) = share price (token0)                (token0 = MUSD)
+//
+// The pool price used is spot (slot0) at the sampled block. Spot is
+// manipulable within a block, but observations are ~hourly and TVL-weighted,
+// and this figure is display-only — while historical TWAP reads can revert
+// entirely when the pool's observation cardinality is too low.
+//
+// Each pairwise growth ratio is weighted by the smaller (more conservative)
+// MUSD TVL of the two observations, per the vaults.fyi methodology:
 //
 //   weight_t         = min(TVL_t, TVL_(t-1))
 //   interest rate    = ( Σ (sp_t / sp_(t-1)) · weight_t ) / ( Σ weight_t ) - 1
 //
-// The window interest rate is then annualized. This vault auto-compounds
-// (collected fees are redeposited into the position), so we use the
-// compounding form:
+// The window interest rate is then annualized with the compounding form:
 //
 //   APY = (1 + interest rate) ^ (year / time) - 1
 //
-// where `time` is the window length in seconds and `year` is 31,536,000. The
-// simple (non-compounding) alternative, kept here for reference, would be:
+// where `time` is the observed window span in seconds and `year` is
+// 31,536,000.
 //
-//   APY = interest rate · (year / time)
+// INTENTIONAL: `interest rate` is the weighted mean of *per-sampling-interval*
+// ratios, while `time` is the whole window — so the exponent deliberately
+// understates strict per-interval compounding by ~the number of samples. This
+// damping keeps one day of LP price movement (which annualizes to thousands
+// of percent when compounded per-hour) from dominating the displayed figure.
+// Do not "fix" the exponent to per-interval time; that was tried and reverted
+// by explicit product decision (2026-07-14).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Seconds in a (non-leap) year, per the methodology. */
@@ -72,18 +89,21 @@ const SAMPLE_FETCH_CONCURRENCY = 4;
 const MIN_WINDOW_COVERAGE = 0.5;
 
 const SHARE_PRICE_ABI = VAULT_LENS_ABI.filter((x) => x.name === "sharePrice");
+const POOL_STATE_ABI = VAULT_LENS_ABI.filter((x) => x.name === "getPoolState");
 const TOTAL_ASSETS_ABI = VAULT_ABI.filter((x) => x.name === "totalAssets");
 
 type PublicClient = NonNullable<ReturnType<typeof usePublicClient>>;
 
-/** One onchain observation: share price and TVL ("total shares value") at a block. */
+/** One onchain observation: share price, TVL and pool price at a block. */
 interface ShareSample {
   /** Unix seconds (from the block header). */
   timestamp: number;
-  /** Raw onchain share price = totalAssets · 10^decimals / totalSupply. */
+  /** Raw onchain share price = totalAssets · 10^decimals / totalSupply, in token0. */
   sharePrice: bigint;
-  /** Raw onchain TVL = totalAssets. Used only as a relative weight. */
+  /** Raw onchain TVL = totalAssets, in token0. Used only as a relative weight. */
   tvl: bigint;
+  /** Pool spot sqrtPriceX96 at the same block, for token0 → MUSD conversion. */
+  sqrtPriceX96: bigint;
 }
 
 export interface VaultApy {
@@ -188,14 +208,14 @@ async function estimateSampleBlocks(
   return samples;
 }
 
-/** Reads share price + TVL at a historical block, forming one observation. */
+/** Reads share price + TVL + pool price at a historical block, forming one observation. */
 async function fetchSampleAtBlock(
   client: PublicClient,
   lensAddress: `0x${string}`,
   vaultAddress: `0x${string}`,
   block: bigint,
 ): Promise<ShareSample> {
-  const [sharePrice, tvl, blockInfo] = await Promise.all([
+  const [sharePrice, tvl, poolState, blockInfo] = await Promise.all([
     client.readContract({
       address: lensAddress,
       abi: SHARE_PRICE_ABI,
@@ -209,13 +229,22 @@ async function fetchSampleAtBlock(
       functionName: "totalAssets",
       blockNumber: block,
     }),
+    client.readContract({
+      address: lensAddress,
+      abi: POOL_STATE_ABI,
+      functionName: "getPoolState",
+      args: [vaultAddress],
+      blockNumber: block,
+    }),
     client.getBlock({ blockNumber: block }),
   ]);
 
+  const [sqrtPriceX96] = poolState as readonly [bigint, number];
   return {
     timestamp: Number(blockInfo.timestamp),
     sharePrice: sharePrice as bigint,
     tvl: tvl as bigint,
+    sqrtPriceX96,
   };
 }
 
@@ -250,20 +279,47 @@ async function fetchWindowSamples(
 // digit). Dividing (sp_t · 1e18) / sp_(t-1) as BigInt first preserves it.
 const RATIO_SCALE = 1_000_000_000_000_000_000n; // 1e18
 
+/** 2^96 as a float, for converting sqrtPriceX96 into a plain price factor. */
+const Q96 = 2 ** 96;
+
+/**
+ * Share price re-denominated into MUSD, as an unnormalized BigInt. When token0
+ * is not MUSD, multiplies by the pool price sqrtP² — the 2^192 scale factor is
+ * deliberately NOT divided out, since only pairwise *ratios* of these values
+ * are ever taken and the constant cancels (dividing here would throw away the
+ * precision the BigInt path exists to keep).
+ */
+function sharePriceMusd(s: ShareSample, convertToMusd: boolean): bigint {
+  if (!convertToMusd) return s.sharePrice;
+  return s.sharePrice * s.sqrtPriceX96 * s.sqrtPriceX96;
+}
+
+/** TVL re-denominated into MUSD, as a float — used only as a relative weight. */
+function tvlMusd(s: ShareSample, convertToMusd: boolean): number {
+  const tvl = Number(s.tvl);
+  if (!convertToMusd) return tvl;
+  const price = (Number(s.sqrtPriceX96) / Q96) ** 2;
+  return tvl * price;
+}
+
 /**
  * Computes the annualized APY for a single trailing window from a series of
- * onchain observations, following the vaults.fyi methodology exactly:
+ * onchain observations (see the methodology block at the top of this file):
  *
- *   1. For each consecutive pair, ratio = sp_t / sp_(t-1).
- *   2. Weight each ratio by min(TVL_t, TVL_(t-1)).
- *   3. interest rate = Σ(ratio · weight) / Σ(weight) - 1.
- *   4. APY = (1 + interest rate) ^ (year / time) - 1, with `time` the observed
- *      span of the window in seconds.
+ *   1. Re-denominate each observation into MUSD.
+ *   2. For each consecutive pair, ratio = sp_t / sp_(t-1).
+ *   3. Weight each ratio by min(TVL_t, TVL_(t-1)) in MUSD.
+ *   4. interest rate = Σ(ratio · weight) / Σ(weight) - 1.
+ *   5. APY = (1 + interest rate) ^ (year / time) - 1, with `time` the observed
+ *      span of the window in seconds (deliberately damped — see header).
  *
  * `samples` must be sorted ascending by timestamp. Returns APY in percent, or
  * undefined when the series can't support a well-defined result.
  */
-function computeWindowApy(samples: ShareSample[]): number | undefined {
+function computeWindowApy(
+  samples: ShareSample[],
+  convertToMusd: boolean,
+): number | undefined {
   if (samples.length < 2) return undefined;
 
   let weightedRatioSum = 0;
@@ -273,15 +329,20 @@ function computeWindowApy(samples: ShareSample[]): number | undefined {
     const prev = samples[i - 1];
     const cur = samples[i];
     if (prev.sharePrice <= 0n || cur.sharePrice <= 0n) continue;
+    if (convertToMusd && (prev.sqrtPriceX96 <= 0n || cur.sqrtPriceX96 <= 0n))
+      continue;
 
-    // ratio = sp_t / sp_(t-1), computed at BigInt precision then narrowed.
-    const ratio =
-      Number((cur.sharePrice * RATIO_SCALE) / prev.sharePrice) / 1e18;
+    // ratio = sp_t / sp_(t-1) in MUSD, computed at BigInt precision then narrowed.
+    const spPrev = sharePriceMusd(prev, convertToMusd);
+    const spCur = sharePriceMusd(cur, convertToMusd);
+    const ratio = Number((spCur * RATIO_SCALE) / spPrev) / 1e18;
     if (!Number.isFinite(ratio)) continue;
 
-    // weight_t = min(TVL_t, TVL_(t-1)) — the conservative TVL of the pair.
-    const minTvl = prev.tvl < cur.tvl ? prev.tvl : cur.tvl;
-    const weight = Number(minTvl);
+    // weight_t = min(TVL_t, TVL_(t-1)) — the conservative MUSD TVL of the pair.
+    const weight = Math.min(
+      tvlMusd(prev, convertToMusd),
+      tvlMusd(cur, convertToMusd),
+    );
     if (weight <= 0) continue;
 
     weightedRatioSum += ratio * weight;
@@ -339,6 +400,9 @@ export function useVaultApy(
     () => getArchiveClient(chainId) as PublicClient | undefined,
     [chainId],
   );
+  // The onchain share price is in token0; when token0 isn't MUSD (mainnet,
+  // where token0 = BTC) every observation is re-denominated into MUSD.
+  const convertToMusd = !isMusdToken0(chainId);
   const [result, setResult] = useState<VaultApy>({
     ...EMPTY_APY,
     isLoading: true,
@@ -391,9 +455,9 @@ export function useVaultApy(
         samples[samples.length - 1].timestamp - samples[0].timestamp;
       if (observedSpan < requestedSpan * MIN_WINDOW_COVERAGE) return undefined;
 
-      return computeWindowApy(samples);
+      return computeWindowApy(samples, convertToMusd);
     },
-    [vaultAddress, firstEventTimestamp],
+    [vaultAddress, firstEventTimestamp, convertToMusd],
   );
 
   const fetchApy = useCallback(async () => {
