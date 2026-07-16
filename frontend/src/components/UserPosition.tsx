@@ -1,33 +1,24 @@
 "use client";
 
 import { formatTokenAmount } from "@/lib/utils";
-import { useReadContract } from "wagmi";
-import { VAULT_ABI } from "@/lib/contracts";
 
 interface Props {
-  vaultAddress: `0x${string}`;
   shares?: bigint;
+  /** convertToAssets(shares), served by the user-position endpoint. */
+  assetValue?: bigint;
   symbol0?: string;
   decimals0?: number;
   isConnected: boolean;
 }
 
 export function UserPosition({
-  vaultAddress,
   shares,
+  assetValue,
   symbol0 = "TOKEN0",
   decimals0 = 18,
   isConnected,
 }: Props) {
   const hasShares = shares !== undefined && shares > BigInt(0);
-
-  const { data: assetValue } = useReadContract({
-    address: vaultAddress,
-    abi: VAULT_ABI,
-    functionName: "convertToAssets",
-    args: hasShares ? [shares] : undefined,
-    query: { enabled: hasShares && !!vaultAddress, refetchInterval: 10_000 },
-  });
 
   if (!isConnected || !hasShares) return null;
 
@@ -52,7 +43,7 @@ export function UserPosition({
             style={{ color: "var(--text)" }}
           >
             {assetValue !== undefined
-              ? formatTokenAmount(assetValue as bigint, decimals0, 8)
+              ? formatTokenAmount(assetValue, decimals0, 8)
               : "—"}
           </p>
           <p className="text-sm mt-0.5" style={{ color: "var(--text-2)" }}>

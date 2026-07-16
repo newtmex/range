@@ -1,5 +1,5 @@
-# Compiler files
-cache/
+# Compiler files (Foundry, repo root only — frontend/src/server/cache is source)
+/cache/
 out/
 
 # Ignores development broadcast logs

@@ -27,7 +27,7 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
   const vault = useVaultState(vaultAddress);
   const pool = usePoolState(vaultAddress, vault.initialized);
   const metrics = useVaultMetrics(vaultAddress, vault.initialized);
-  const tokens = useTokenInfo(vault.token0Address, vault.token1Address);
+  const tokens = useTokenInfo(vaultAddress);
   const isToken0Musd = isMusdToken0(chainId, tokens.symbol0);
   const user = useUserPosition(
     vaultAddress,
@@ -37,13 +37,9 @@ export function useVaultPage(vaultAddress: `0x${string}`) {
     vault.decimals1,
   );
   const events = useVaultEvents(vaultAddress);
-  const vaultApy = useVaultApy(
-    vaultAddress,
-    chainId,
-    events.firstEventTimestamp,
-    events.isLoading,
-    events.isError,
-  );
+  // The APY endpoint composes the subgraph first-activity lookup server-side,
+  // so the hook no longer needs the events state threaded through.
+  const vaultApy = useVaultApy(vaultAddress, chainId);
 
   const sym0 = tokens.symbol0 ?? "TOKEN0";
   const sym1 = tokens.symbol1 ?? "TOKEN1";

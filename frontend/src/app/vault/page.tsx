@@ -124,8 +124,8 @@ function VaultPageContent() {
           {/* Right: User position + History */}
           <div className="space-y-6">
             <UserPosition
-              vaultAddress={vaultAddress}
               shares={user.shares}
+              assetValue={user.assetValue}
               symbol0={sym0}
               decimals0={d0}
               isConnected={isConnected}
